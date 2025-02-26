@@ -15,7 +15,7 @@ function load_time_series(; s_num::Integer,
     number_of_scenarios = s_num ^ 4
     ts_data = JuMP.Containers.DenseAxisArray(zeros(length(2020:10:2050), length(config["timeseries"]), number_of_scenarios, config["season_length"]*4), 2020:10:2050, config["timeseries"], 1:number_of_scenarios, collect(1:config["season_length"]*4))
     
-    scenarios = HydrogenExpansion.sample_scenarios(s_num=s_num, config=config)
+    scenarios = P2H_CapacityExpansion.sample_scenarios(s_num=s_num, config=config)
 
     for g in config["timeseries"]
       data_path=normpath(joinpath(dirname(@__FILE__),"..","data", "$g.csv"))

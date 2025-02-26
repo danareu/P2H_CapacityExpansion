@@ -7,13 +7,13 @@ function investigate_samples(;
     k = ceil(Int, size(ts_data)[3]*0.4) # 20% training set
 
     # run optimization problem
-    ins = HydrogenExpansion.run_opt(scenarios=collect(1:k), ts_data=ts_data, data=data, config=config) 
+    ins = P2H_CapacityExpansion.run_opt(scenarios=collect(1:k), ts_data=ts_data, data=data, config=config) 
     # fix fist-stage decision variable & run deterministic problem m times
     m = size(ts_data)[3]
     obj_avg = 0
     var = Dict()
     for i in k+1:m
-        result_fix = HydrogenExpansion.run_opt(scenarios=[i], ts_data=ts_data, data=data, config=config, evp=ins.variables["cap_new"])
+        result_fix = P2H_CapacityExpansion.run_opt(scenarios=[i], ts_data=ts_data, data=data, config=config, evp=ins.variables["cap_new"])
         obj_avg += result_fix.objective
         if i == (k+1)
             var = result_fix.variables
@@ -65,11 +65,11 @@ end
 
 function calculate_eev(;config::Dict{Any,Any}, ts_data_org::JuMP.Containers.DenseAxisArray, data, probabilities::Dict{Any,Any})
     # average of all random variables
-    ts_data = HydrogenExpansion.average_ts_data(ts_data=ts_data_org)
+    ts_data = P2H_CapacityExpansion.average_ts_data(ts_data=ts_data_org)
     # solve the stochastic problem
-    result_first = HydrogenExpansion.run_opt(scenarios=[1], ts_data=ts_data, data=data, config=config) 
+    result_first = P2H_CapacityExpansion.run_opt(scenarios=[1], ts_data=ts_data, data=data, config=config) 
     # fix the first-stage variables & solve deterministic problem
-    result_second = HydrogenExpansion.run_opt(scenarios=collect(1:size(ts_data_org)[3]), ts_data=ts_data_org, data=data, config=config, evp=result_first.variables["cap_new"])
+    result_second = P2H_CapacityExpansion.run_opt(scenarios=collect(1:size(ts_data_org)[3]), ts_data=ts_data_org, data=data, config=config, evp=result_first.variables["cap_new"])
     
     return EEV(result_first.objective, result_second.objective, result_first.variables, result_second.variables)
 end
@@ -83,7 +83,7 @@ function calculate_expected_value_information(; config::Dict{Any,Any}, data, ts_
     var = Dict()
     # iterate over scenarios
     for i in 1:size(ts_data)[3]
-        det = HydrogenExpansion.run_opt(scenarios=[i], ts_data=ts_data, data=data, config=config)
+        det = P2H_CapacityExpansion.run_opt(scenarios=[i], ts_data=ts_data, data=data, config=config)
         obj_avg += (det.objective*probabilities[i])
         if i == 1
             var = det.variables
