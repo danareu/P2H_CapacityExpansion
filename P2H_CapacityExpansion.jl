@@ -5,7 +5,7 @@
 #####################
 
 
-module HydrogenExpansion
+module P2H_CapacityExpansion
     using Pkg
     using JuMP
     using Gurobi
