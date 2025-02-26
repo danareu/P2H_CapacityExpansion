@@ -1,0 +1,71 @@
+colour_codes:
+  P_Nuclear: rgb(112,112,112)
+  Load: orange,
+  X_Electrolysis:  rgb(191,0,191)
+  P_Coal_Hardcoal: rgb(229,229,229)
+  P_Gas: rgb(224,91,9)
+  LL: red
+  RES_Wind_Offshore_Transitional: rgb(104,149,221)
+  RES_Wind_Onshore_Avg: rgb(35,94,188)
+  RES_PV_Utility_Avg: rgb(249,208,2)
+  Pumped_Hydro: rgb(48,213,200)
+
+# cost for lost load
+cll: 50
+# difference between each investment year
+tdelta: 10
+# interest rate
+r: 0.05
+
+
+power:
+  - P_Nuclear
+  - P_Coal_Hardcoal
+  - P_Gas
+  - RES_Wind_Onshore_Avg
+  - RES_Wind_Offshore_Transitional
+  - RES_PV_Utility_Avg
+  - Pumped_Hydro
+
+h2:
+  - X_Electrolysis
+
+dispatch:
+  - P_Nuclear
+  - P_Coal_Hardcoal
+  - P_Gas
+  - Pumped_Hydro
+
+nondispatch:
+  - RES_Wind_Onshore_Avg
+  - RES_Wind_Offshore_Transitional
+  - RES_PV_Utility_Avg
+
+timeseries:
+  - RES_Wind_Onshore_Avg
+  - RES_Wind_Offshore_Transitional
+  - RES_PV_Utility_Avg
+  - Demand
+
+avail_scenarios:
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+
+season_length: 96
+
+generators:
+  - P_Nuclear
+  - P_Coal_Hardcoal
+  - P_Gas
+  - RES_Wind_Onshore_Avg 
+  - RES_Wind_Offshore_Transitional
+  - RES_PV_Utility_Avg
+  - X_Electrolysis
+  - Pumped_Hydro
