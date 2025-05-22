@@ -8,35 +8,78 @@ function sample_scenarios(; s_num::Integer, config::Dict{Any,Any},)
 end
 
 
-function load_time_series(; s_num::Integer,
-  config::Dict{Any,Any}, timesteps::UnitRange{Int})
- 
-    # return container with RES and Demand data
-    number_of_scenarios = s_num ^ 4
-    ts_data = JuMP.Containers.DenseAxisArray(zeros(length(2020:10:2050), length(config["timeseries"]), number_of_scenarios, config["season_length"]*4), 2020:10:2050, config["timeseries"], 1:number_of_scenarios, collect(1:config["season_length"]*4))
-    
-    scenarios = P2H_CapacityExpansion.sample_scenarios(s_num=s_num, config=config)
 
-    for g in config["timeseries"]
-      data_path=normpath(joinpath(dirname(@__FILE__),"..","data", "$g.csv"))
-      df = DataFrame(CSV.File(data_path))
-      
-      
-      for y in 2020:10:2050
-        k_beg = 1
-        for t in [1:2189,2190:4379,4380:6569,6570:8760]
-          repeating = Int(number_of_scenarios/s_num)
-          for (i,n) in enumerate(repeat(scenarios, repeating))
-            # sample one random week
-            k = sample(t[1:end-config["season_length"]], 1, replace=false)[1]
-            ts_data[y,g,i,k_beg:k_beg+config["season_length"]-1] = df[k:k+config["season_length"]-1, string(n)]
-          end
-          k_beg += config["season_length"]
-        end 
-      end 
-    end
-  return ts_data
+function load_timeseries_data_provided(; config::Dict{Any,Any})
+
+  # Generate the data path based on application and region
+  CountryData = Dict(t => DataFrame(CSV.File(normpath(joinpath(dirname(@__FILE__),"..","data", "$t.csv")), delim=';', decimal=',')) for t ∈ config["timeseries"])
+  for t ∈ config["timeseries"]
+    select!(CountryData[t], config["countries"])
+  end
+  return CountryData
 end
+
+
+
+function run_clust(; CountryData::Dict{String, DataFrames.DataFrame}, representation::String, config::Dict{Any,Any}, n_clust::Integer)
+  
+  data = TSClustering.normalize_data(config=config, CountryData=CountryData)
+  data_clustering = TSClustering.create_clustering_matrix(technology=config["timeseries"], CountryData=data)
+
+  # define distance matrix r
+  D = TSClustering.define_distance(w=0, data_clustering=data_clustering, fast_dtw=false)
+  result = hclust(D, linkage=:ward)
+  cl = cutree(result, k=n_clust)
+
+  weights = Dict{Int64, Int64}()
+  for i ∈ cl
+      weights[i] = get(weights, i, 0) + 1
+  end
+
+  weights_yrl = JuMP.Containers.DenseAxisArray(zeros(n_clust, 24), 1:n_clust, 1:24)
+  for c ∈ 1:n_clust, h ∈ 1:24
+    weights_yrl[c,h] = weights[c] / 8760
+  end
+
+
+  # read in again because of Julia memory issues
+  CountryData = P2H_CapacityExpansion.load_timeseries_data_provided(config=config)
+
+  # calculate the representative only medoid so far available
+  if representation == "medoid"
+    cluster_dict_org = TSClustering.calculate_medoid(data_org=CountryData, cl=cl, config=config, K=n_clust, technology=config["timeseries"])
+  else
+    cluster_dict_org = TSClustering.calculate_representative(representative="centroid",data_clustering=data_clustering, cl=cl, weights=weights,k=n_clust)
+  end
+
+  sc = TSClustering.scaling(data_org=CountryData, scaled_clusters=cluster_dict_org, k=n_clust, weights=weights, config=config, technology=config["timeseries"])
+
+  return load_timeseries_data(sc, weights_yrl)
+end
+
+
+
+function load_timeseries_data_full(; config::Dict{Any,Any})
+
+  # Read om the data 
+  CountryData = Dict(t => DataFrame(CSV.File(normpath(joinpath(dirname(@__FILE__),"..","data", "$t.csv")), delim=';', decimal=',')) for t ∈ config["timeseries"])
+
+  sc = JuMP.Containers.DenseAxisArray(zeros(length(config["countries"]), length(config["timeseries"]), 8760), config["countries"], config["timeseries"], 1:8760) 
+
+  # populate the array
+  for t ∈ config["timeseries"], r ∈ config["countries"]
+    data_col = CountryData[t][!, r]
+    if length(data_col) != 8760
+      error("Time series for $r in $t does not have 8.760 entries.")
+    else
+      sc[r,t,:] .= data_col
+    end
+  end
+  return sc
+end
+
+
+
 
 
 function read_yaml_file()
@@ -45,34 +88,59 @@ function read_yaml_file()
 end
 
 
-function load_data()
+function load_data(;config::Dict{Any,Any})
 
-  data_path=normpath(joinpath(dirname(@__FILE__),"..","data", "data.xlsx"))
-  xf = XLSX.readxlsx(data_path)
-  names = XLSX.sheetnames(xf)
+  xf = XLSX.readxlsx(config["data_path"])
+  nam = XLSX.sheetnames(xf)
   data_dict = Dict()
 
-  for n in names
-    df = DataFrame(XLSX.readtable(data_path, n))
+  for n ∈ nam
+    df = DataFrame(XLSX.readtable(config["data_path"], n))
 
-    # Iterate through DataFrame rows and populate the dictionary
-    temp = Dict()
-    for row in eachrow(df)
-        key = n in ["d_h2", "d_power", "emission_penalty"] ? (row.Year) :
-        n in ["lifetime", "emission"] ? (row.Generator) :
-        (row.Generator, row.Year)
-        if n in ["d_h2"]
-          temp[key] = row.Value*0.3
-        elseif n in ["d_power"]
-          temp[key] = row.Value*0.4
-        else
-          temp[key] = row.Value
-        end
-
+    if "Unit" ∈ names(df)
+      select!(df, Not("Unit"))
     end
-    data_dict[n] = temp
+
+    config["tech_mapping"] = Dict("Batt" => ["Batt_in", "Batt_out"])
+
+    if "Generator" ∈ names(df)
+      default_value_storage!(df)
+    end
+
+    # Convert to Jump Density Array
+    if n ∈ ["c_CAPEX", "c_var", "c_fix"]
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050)
+    elseif n ∈ ["cap", "cap_init"]
+      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050)
+    elseif n ∈ ["lifetime", "emission"]
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]))
+    elseif n ∈ ["demand"]
+      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, config["energy_carriers"])
+    elseif n ∈ ["eta"]
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050)
+    end
   end
   return data_dict
+end
+
+
+
+
+function create_array_from_df(df::DataFrame, els...)
+
+  A = JuMP.Containers.DenseAxisArray(
+    zeros(length.(els)...), els...)
+
+  # order columns 
+  # Fill in values from Excel
+  for r in eachrow(df)
+      try
+          A[r[1:end-1]...] = r.Value 
+      catch err
+          @debug err
+      end
+  end
+  return A 
 end
 
 
@@ -85,5 +153,66 @@ function average_ts_data(; ts_data::JuMP.Containers.DenseAxisArray)
   end end end end
 
   return ts_data_2 / length(axes(ts_data)[3])
+end
+
+
+
+
+function default_value_storage!(df)
+  # map general tech => subtechs
+  tech_expansions = Dict(
+    "D_Battery_Li-Ion" => ["D_Battery_Li-Ion_in", "D_Battery_Li-Ion_out"]
+  )
+
+  for (base_tech, expanded) ∈ tech_expansions
+    if base_tech ∈ df[!, "Generator"]
+        rows = filter(row -> row["Generator"] == base_tech, df)
+        for new_tech in expanded
+            new_rows = deepcopy(rows)
+            new_rows[!, "Generator"] .= new_tech
+            append!(df, new_rows)
+        end
+        filter!(row -> row["Generator"] != base_tech, df)
+    end
+  end
+  return df
+end
+
+function load_cep_data(; config::Dict{Any,Any})
+
+  data = load_data(config=config)
+  lines = load_cep_data_lines(config=config)
+
+  return OptDataCEP(data, lines)
+end 
+
+
+function load_cep_data_lines(; config::Dict{Any,Any})
+
+  # Read the sheet into a DataFrame
+  tab = XLSX.readtable(config["data_path"], "trade") |> DataFrame
+
+  techs = unique(tab[!, :Generator])
+  lines_list = unique(tab[!, :Line])
+  lines = Dict{Tuple{String, String}, OptDataCEPLine}()
+
+  for tech ∈ techs, line ∈ lines_list
+      row = filter(r -> r[:Generator] == tech && r[:Line] == line, tab)
+
+      if nrow(row) == 1
+          node_start = row[1, :Node_start]
+          node_end   = row[1, :Node_end]
+          power_lim  = row[1, :Power]
+          length     = row[1, :Length]
+          generator  = line  
+          eff = (length^config["techs"][tech]["efficiency"])/length
+
+          lines[(tech, line)] = OptDataCEPLine(generator, node_start, node_end, power_lim, length, eff)
+      else
+          @warn "No unique row found for Generator=$tech and Line=$line"
+      end
+  end
+
+  return lines
 end
 

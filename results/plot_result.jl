@@ -68,3 +68,13 @@ function plot_results_bar_scenarios(; df::JuMP.Containers.DenseAxisArray, title:
     return plot(plots, Layout(barmode="relative", title_text=title))
 end    
 
+
+
+function plot_generation_dispatch(; generation)
+
+
+
+
+    #value.(cep.model[:cap])
+
+end

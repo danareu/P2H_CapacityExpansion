@@ -10,24 +10,26 @@ struct OptResult
   status::Symbol
   objective::Float64
   variables::Dict{Any,Any}
-  probabilities::Dict{Any,Any}
  end
 
-struct Sample
-  oos_obj::Float64
-  ins_obj::Float64
-  oos_var::Dict{Any,Any}
-  ins_var::Dict{Any,Any}
+struct load_timeseries_data
+  sc::JuMP.Containers.DenseAxisArray
+  weights::Dict{Any,Any}
+ end
+
+
+struct OptDataCEPLine 
+  generator::String
+  node_start::String
+  node_end::String
+  power_lim::Number
+  length::Number
+  eff::Number
 end
 
-struct EVPI
-  objective::Float64
-  variables::Dict{Any,Any}
- end
 
- struct EEV
-  ev_obj::Float64
-  eev_obj::Float64
-  ev_variables::Dict{Any,Any}
-  eev_variables::Dict{Any,Any}
- end
+
+struct OptDataCEP 
+  data::Dict
+  lines::Dict{Tuple{String, String}, OptDataCEPLine}
+end

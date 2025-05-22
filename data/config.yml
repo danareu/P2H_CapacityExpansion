@@ -5,67 +5,151 @@ colour_codes:
   P_Coal_Hardcoal: rgb(229,229,229)
   P_Gas: rgb(224,91,9)
   LL: red
-  RES_Wind_Offshore_Transitional: rgb(104,149,221)
-  RES_Wind_Onshore_Avg: rgb(35,94,188)
-  RES_PV_Utility_Avg: rgb(249,208,2)
-  Pumped_Hydro: rgb(48,213,200)
+  P_Wind_Offshore_Transitional: rgb(104,149,221)
+  P_Wind_Onshore_Avg: rgb(35,94,188)
+  P_PV_Utility_Avg: rgb(249,208,2)
+  P_Pumped_Hydro: rgb(48,213,200)
+
+
+
+data_path: "/cluster/home/danare/git/P2H_CapacityExpansion/data/data12.xlsx"
+
 
 # cost for lost load
 cll: 50
 # difference between each investment year
 tdelta: 10
 # interest rate
-r: 0.05
+r: 0.04
+# regions to be considered
+countries:
+  - DE
 
-
-power:
-  - P_Nuclear
-  - P_Coal_Hardcoal
-  - P_Gas
-  - RES_Wind_Onshore_Avg
-  - RES_Wind_Offshore_Transitional
-  - RES_PV_Utility_Avg
-  - Pumped_Hydro
-
-h2:
-  - X_Electrolysis
-
-dispatch:
-  - P_Nuclear
-  - P_Coal_Hardcoal
-  - P_Gas
-  - Pumped_Hydro
-
-nondispatch:
-  - RES_Wind_Onshore_Avg
-  - RES_Wind_Offshore_Transitional
-  - RES_PV_Utility_Avg
-
-timeseries:
-  - RES_Wind_Onshore_Avg
-  - RES_Wind_Offshore_Transitional
-  - RES_PV_Utility_Avg
+Load:
   - Demand
 
-avail_scenarios:
-  - 2010
-  - 2011
-  - 2012
-  - 2013
-  - 2014
-  - 2015
-  - 2016
-  - 2017
-  - 2018
+SCTOLERANCE: 10.0e-6
 
-season_length: 96
+energy_carriers:
+  - electricity
+  - H2
+  - electricity_store
 
-generators:
-  - P_Nuclear
-  - P_Coal_Hardcoal
-  - P_Gas
-  - RES_Wind_Onshore_Avg 
-  - RES_Wind_Offshore_Transitional
-  - RES_PV_Utility_Avg
-  - X_Electrolysis
-  - Pumped_Hydro
+dispatch: true
+
+
+timeseries:
+  - P_Wind_Onshore_Avg
+  - P_Wind_Offshore_Transitional
+  - P_PV_Utility_Avg
+  - Demand
+
+
+
+techs:
+  P_Wind_Offshore_Transitional:
+    tech_group: non_dispatchable_generation
+    input:
+      timeseries: wind
+    output:
+      carrier: electricity
+
+  P_Wind_Onshore_Avg:
+    tech_group: non_dispatchable_generation
+    input:
+      timeseries: wind
+    output:
+      carrier: electricity
+
+  P_PV_Utility_Avg:
+    tech_group: non_dispatchable_generation
+    input:
+      timeseries: pv
+    output:
+      carrier: electricity
+
+  X_Electrolysis:
+    tech_group: conversion
+    input:
+      carrier: electricity
+    output:
+      carrier: H2
+
+  P_Nuclear:
+    tech_group: dispatchable_generation
+    input:
+      fuel: nuclear
+    output:
+      carrier: electricity
+
+  P_Coal_Hardcoal:
+    tech_group: dispatchable_generation
+    input:
+      fuel: coal
+    output:
+      carrier: electricity
+
+  P_Gas_CCGT:
+    tech_group: dispatchable_generation
+    input:
+      fuel: gas
+    output:
+      carrier: electricity
+
+  P_Biomass:
+    tech_group: dispatchable_generation
+    input:
+      fuel: biomass
+    output:
+      carrier: electricity
+
+
+  D_Battery_Li-Ion_in:
+    tech_group: conversion
+    input:
+      carrier: electricity
+    output:
+      carrier: electricity_store
+    
+  
+  D_Battery_Li-Ion_out:
+    tech_group: conversion
+    input:
+      carrier: electricity_store
+    output:
+      carrier: electricity
+    
+  
+  S_Battery_Li-Ion:
+    tech_group: storage
+    input:
+      carrier: electricity_store
+    output:
+      carrier: electricity_store
+    constraints:
+      P2E: 4
+
+
+  trans_elec:
+      tech_group: transmission
+      investment_costs: 0.86416838 
+      efficiency: 0.99997 
+      investment_costs: 0.86416838   
+      input:
+          carrier: electricity
+      output:
+          carrier: electricity
+      constraints:
+          efficiency: 0.99997 #[1/km]
+
+  trans_H2:
+      tech_group: transmission
+      efficiency: 0.999995
+      investment_costs: 0.00079909
+      investment_costs: 0.00079909
+      input:
+          carrier: H2
+      output:
+          carrier: H2
+      constraints:
+          efficiency: 0.999995 #[1/km]

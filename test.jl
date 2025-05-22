@@ -5,26 +5,20 @@ Pkg.activate(".")
 using .P2H_CapacityExpansion
 using CPLEX
 using JuMP
+using XLSX
 using PlotlyJS
+using Gurobi
 using Dates
 ENV["CPLEX_STUDIO_BINARIES"] = "/cluster/home/danare/opt/ibm/ILOG/CPLEX_Studio2211/cplex/bin/x86-64_linux/"
 Pkg.add("CPLEX")
 
 
-for ls in [1]
+# read in the data
+config = P2H_CapacityExpansion.read_yaml_file();
+data = P2H_CapacityExpansion.load_cep_data(config=config);
+ts_data = P2H_CapacityExpansion.load_timeseries_data_full(config=config);
 
-    SCEN_NUM = ls # number of wheater years to consider
+# run the optimization model
+model = P2H_CapacityExpansion.run_opt(ts_data=ts_data, data=data, config=config);
 
-    ## LOAD DATA ##
-    config = P2H_CapacityExpansion.read_yaml_file()
-    data = P2H_CapacityExpansion.load_data()
-    ts_data = P2H_CapacityExpansion.load_time_series(s_num=SCEN_NUM, config=config, timesteps=1:8760)
-
-    ## OPTIMIZATION ##
-    start_time_org = now()
-    model = P2H_CapacityExpansion.run_opt(ts_data=ts_data, data=data, config=config, benders=false, master=false)
-    result = P2H_CapacityExpansion.optimize_and_output(cep=model)
-    probabilities = result.probabilities
-
-end
-
+result = P2H_CapacityExpansion.optimize_and_output(cep=model)
