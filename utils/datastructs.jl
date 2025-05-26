@@ -27,8 +27,6 @@ struct OptDataCEPLine
   eff::Number
 end
 
-
-
 struct OptDataCEP 
   data::Dict
   lines::Dict{Tuple{String, String}, OptDataCEPLine}

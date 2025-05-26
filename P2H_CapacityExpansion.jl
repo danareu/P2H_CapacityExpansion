@@ -18,6 +18,7 @@ module P2H_CapacityExpansion
     using CSV
     using Clustering
     using Distances
+    using AxisKeys
     using YAML
     include("/cluster/home/danare/git/Clustering/TSClustering.jl")
     using .TSClustering

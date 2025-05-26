@@ -70,11 +70,56 @@ end
 
 
 
-function plot_generation_dispatch(; generation)
+function plotgen(cep, config, year, data, ts_data)
 
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢 = get_sets(cep=cep)
 
+    y = year
+    n_rows = length(𝓡)
+    n_cols = length(config["energy_carriers"])
 
+    p = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=[r * ", " * c for r ∈ 𝓡, c ∈ config["energy_carriers"]], shared_xaxes=true, vertical_spacing=0.02)
+    
+    for (row_idx, r) ∈ enumerate(𝓡)
+        for (col_idx, c) ∈ enumerate(config["energy_carriers"])
+            for g ∈ 𝓖
+                try
+                    v = value.(cep.model[:gen][r, g, y, c, :])
+                    grouplegend = sum(v) < 0 ? "one" : "two"
+                    if sum(v) != 0
+                        trace = scatter(
+                            x=𝓣,
+                            y=v,
+                            mode="lines",
+                            name= g,
+                            stackgroup= "one",
+                            legendgroup=g,
+                            fill=(g == first(𝓖) ? "tozeroy" : "tonexty"),
+                            line=attr(color=config["techs"][g]["color"]),
+                            showlegend=(row_idx == 1 && col_idx == 1),
+                        )
+                        add_trace!(p, trace, row=row_idx, col=col_idx)
+                    end
+                catch e
+                    @warn "Skipping $g in $r - $c due to error: $e"
+                end
+            end   
+        end
+        trace = scatter(
+            x=𝓣,
+            y=ts_data[r,"Demand",:] * data.data["demand"][r,y,"electricity"],
+            mode="lines",
+            stackgroup="three",
+            fill = nothing,
+            name="Electricity Demand",
+            legendgroup="Electricity Demand",
+            )
+        add_trace!(p, trace, row=row_idx, col=1)
 
-    #value.(cep.model[:cap])
-
+    end
+    
+    relayout!(p, title_text="Generation")
+    open("/cluster/home/danare/git/P2H_CapacityExpansion/example.html", "w") do io
+        PlotlyBase.to_html(io, p.plot)
+    end
 end

@@ -72,12 +72,13 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
         @variable(cep.model, AccumulatedNewCapacity[r ∈ 𝓡 ,g ∈ sets["nodes"], y ∈ 𝓨] ≥ 0) # accumulated capacity according to lifetime for generators
         @variable(cep.model, NewCapacity[r ∈ 𝓡 ,g ∈ sets["nodes"], y ∈ 𝓨] ≥ 0)           # new capacity investments for generators      
         @variable(cep.model, capex[y ∈ 𝓨, g ∈ sets["nodes"]] ≥ 0)  # capital investment costs for generators
-  
     end
 
     # generation variables
     @variable(cep.model, gen[r ∈ 𝓡 ,g ∈ 𝓖, y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
-    @variable(cep.model, ll[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ config["energy_carriers"]] ≥ 0)   # lost load / ENS
+    @variable(cep.model, ll[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣] ≥ 0)   # lost load / ENS
+    @variable(cep.model, ll_h2[r ∈ 𝓡, y ∈ 𝓨] ≥ 0)   # lost load / ENS
+
     @variable(cep.model, em[y ∈ 𝓨] ≥ 0)      # emission CO2 per year ##curtail,emt??
 
     # cost variables
@@ -98,15 +99,16 @@ function set_up_equations(; cep::OptModelCEP, ts_data::JuMP.Containers.DenseAxis
     emitting_fuels = [g for g ∈ 𝓖 if data["emission"][g] > 0]
 
     # energy balance equation for each energy carrier
-    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ config["energy_carriers"]], 
+    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ setdiff(config["energy_carriers"], "H2")], 
     sum(cep.model[:gen][r,g,y,c,t] for g ∈ cep.sets[c]) 
-    + cep.model[:ll][r,y,t,c] 
+    + (c == "electricity" ? cep.model[:ll][r,y,t] : 0)
     - (c == "electricity" ? (ts_data[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
     == 0)
 
     # yearly energy balance constraint for h2
     @constraint(cep.model, DemandH2[r ∈ 𝓡, y ∈ 𝓨], 
     sum(cep.model[:gen][r,g,y,"H2",t] for g ∈ cep.sets["H2"], t ∈ 𝓣) 
+    + cep.model[:ll_h2][r,y] 
     - data["demand"][r,y,"H2"] 
     == 0)
     
@@ -114,11 +116,11 @@ function set_up_equations(; cep::OptModelCEP, ts_data::JuMP.Containers.DenseAxis
     @constraint(cep.model, EM[y ∈ 𝓨],cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
 
     # cost for lost load yearly 
-    @constraint(cep.model, CLL[y ∈ 𝓨], cep.model[:cll][y] == config["cll"] * (sum(cep.model[:ll][r,y,t,c] for r ∈ 𝓡, t ∈ 𝓣, c ∈ ["electricity", "H2"])))
+    @constraint(cep.model, CLL[y ∈ 𝓨], cep.model[:cll][y] == config["cll"] * (sum(cep.model[:ll][r,y,t] for r ∈ 𝓡, t ∈ 𝓣)+ sum(cep.model[:ll_h2][r,y] for r ∈ 𝓡) ))
 
     # limit max and min generation dispatchable and non dispatchable
-    @constraint(cep.model, GenCapDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y])   
-    @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["cap"][r,g,y]* ts_data[r,g,t])
+    @constraint(cep.model, GenCapDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y])   
+    @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["cap"][r,g,y] * data["eta"][g,y] * ts_data[r,g,t])
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ vcat(cep.sets["non_dispatch"],cep.sets["dispatch"]), c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
 
     setup_opt_opex!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
@@ -135,10 +137,16 @@ function set_up_equations(; cep::OptModelCEP, ts_data::JuMP.Containers.DenseAxis
         # accumulated capacity
         @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ 𝓖, y in 𝓨[2:end]], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,hat_y] for hat_y in 𝓨[1]:10:y if y - 𝓨[1] ≤ data["lifetime"][g]))
         # max potential capacity constraint
-        @constraint(cep.model, MaxCap[r ∈ 𝓡, g ∈ 𝓖, y in 𝓨[2:end]], cep.model[:TotalCapacityAnnual][r,g,y] ≤ data["cap"][r,g,y])
-
+        for r ∈ 𝓡, g ∈ 𝓖, y ∈ 𝓨[2:end]
+            if data["cap"][r, g, y] > 0
+                @constraint(cep.model, MaxCap[r, g, y], cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
+            end
+        end
+        
         @constraint(cep.model, EM_zero[𝓨[end]], cep.model[:em][𝓨[end]] == 0)
-
+    else
+        # emission budget for each country individually
+        @constraint(cep.model, EM_budget[𝓨], cep.model[:em][𝓨] == sum(data["budget"][r,y] for r ∈ 𝓡))
     end
 end
 
@@ -152,27 +160,34 @@ function setup_opt_storage!(cep::OptModelCEP,
 
     @variable(cep.model, StorageLevel[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣] ≥ 0)
 
-    # Connect the previous storage level with the new storage level
-    @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
-    (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : 0 )
-    - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
-    == cep.model[:StorageLevel][r,s,y,t] 
-    )
-
     # Set storage level at beginning and end of year equal
-    @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:StorageLevel][r,s,y,𝓣[end]] == 0)
+    @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:StorageLevel][r,s,y,𝓣[end]] == (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y])*0.5)
 
     # charging Soc according to max storage level 
-    @constraint(cep.model, SoC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], cep.model[:StorageLevel][r,s,y,t] ≤ (config["dispatch"] ? data["cap"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]))
+    @constraint(cep.model, SoC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], cep.model[:StorageLevel][r,s,y,t] ≤ (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]))
     setup_opt_opex!(cep, config, data, 𝓢, 1)
     
     if !config["dispatch"]
         # limit investments p/e ratio
+            # Connect the previous storage level with the new storage level
+        @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
+        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : cep.model[:TotalCapacityAnnual][r,s,y]*0.5)
+        - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
+        == cep.model[:StorageLevel][r,s,y,t] 
+        )
         setup_opt_capex!(cep, config, 𝓢)
 
         @constraint(cep.model, P2E_ratio[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_in",y] * config["techs"][s]["constraints"]["P2E"]  ≤ cep.model[:TotalCapacityAnnual][r,s,y])
         # charging and discharging investments are the same
         @constraint(cep.model, Discharg_Charge[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_in",y] == cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_out",y])
+    
+    else
+        @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
+        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : data["cap_init"][r,s,y]*0.5)
+        - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
+        == cep.model[:StorageLevel][r,s,y,t] 
+        )   
+    
     end
     return cep
 end
@@ -192,10 +207,11 @@ function setup_opt_conversion!(cep::OptModelCEP,
     data = data.data
 
     # Calculate the input generation 
-    @constraint(cep.model, InputConversion[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["conversion"], t ∈ 𝓣], cep.model[:gen][r, g, y, config["techs"][g]["input"]["carrier"], t] ≤ (config["dispatch"] ? data["cap"][r, g, y] : cep.model[:TotalCapacityAnnual][r, g, y]))
+    @constraint(cep.model, InputConversion[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["conversion"], t ∈ 𝓣], cep.model[:gen][r, g, y, config["techs"][g]["input"]["carrier"], t] ≥ (-1) * (config["dispatch"] ? data["cap_init"][r, g, y] : cep.model[:TotalCapacityAnnual][r, g, y]))
+    @constraint(cep.model, InputConversion2[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["conversion"], t ∈ 𝓣], cep.model[:gen][r, g, y, config["techs"][g]["input"]["carrier"], t] ≤ 0)
     
     # Calculate the output generation
-    @constraint(cep.model, Outputconversion[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["conversion"], t ∈ 𝓣], cep.model[:gen][r,g,y,config["techs"][g]["input"]["carrier"],t] ==  (-1) * cep.model[:gen][r,g,y,config["techs"][g]["output"]["carrier"],t] * data["eta"][g,y])
+    @constraint(cep.model, Outputconversion[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["conversion"], t ∈ 𝓣], cep.model[:gen][r,g,y,config["techs"][g]["output"]["carrier"],t] ==  (-1) * cep.model[:gen][r,g,y,config["techs"][g]["input"]["carrier"],t] * data["eta"][g,y])
 
     # add the costs 
     setup_opt_opex!(cep, config, data, cep.sets["conversion"], -1)
@@ -220,6 +236,7 @@ function set_opt_transmission!(cep::OptModelCEP,
 
     ## VARIABLE ##
     @variable(cep.model, FLOW[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣] >= 0)
+    ## define only for avaliable 
 
     if !config["dispatch"]
         @variable(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨]  >= 0)
@@ -304,7 +321,10 @@ end
 
 
 
-function optimize_and_output(; cep::OptModelCEP)
+function optimize_and_output(; cep::OptModelCEP,
+    config::Dict{Any, Any}, 
+    data::OptDataCEP, 
+    ts_data)
 
     optimize!(cep.model)
 
@@ -329,10 +349,14 @@ function optimize_and_output(; cep::OptModelCEP)
     else
         objective = objective_value(cep.model)
         println("\n\nObjective value is $objective")
-        println(file, "Objective = $objective")
         variables = Dict()
+        # generation 
+        #variables["gen"] = convert_jump_container_to_df(cep=cep, config=config)
+
+        #plotgen(cep, config, 2030, data, ts_data)
 
         open(joinpath(pwd(),"P2H_CapacityExpansion","results", "solution_full.txt"), "w") do file
+            println(file, "Objective = $objective")
             for v ∈ all_variables(cep.model)
                 if value.(v) != 0
                     val = value.(v)
@@ -341,9 +365,23 @@ function optimize_and_output(; cep::OptModelCEP)
                     println(file, "$str = $val")
                 end
             end
+
+            for r ∈ axes(ts_data)[1], t ∈ axes(ts_data)[3] 
+                str = "Demand[$r,$t,$(config["year"])]"
+                val = ts_data[r,"Demand",t] * data.data["demand"][r,config["year"],"electricity"]
+                println(file, "$str = $val")
+            end
+            
+            for r in axes(data.data["cap_init"])[1], g in axes(data.data["cap_init"])[2], y in axes(data.data["cap_init"])[3] 
+                val = data.data["cap_init"][r,g,y]
+                println(file, "Capacity$r$g$y = $val") 
+            end
+
         end
         return OptResult(cep.model, status, objective, variables)
     end  
 end
+
+
 
 

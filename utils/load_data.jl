@@ -64,12 +64,13 @@ function load_timeseries_data_full(; config::Dict{Any,Any})
   # Read om the data 
   CountryData = Dict(t => DataFrame(CSV.File(normpath(joinpath(dirname(@__FILE__),"..","data", "$t.csv")), delim=';', decimal=',')) for t ∈ config["timeseries"])
 
-  sc = JuMP.Containers.DenseAxisArray(zeros(length(config["countries"]), length(config["timeseries"]), 8760), config["countries"], config["timeseries"], 1:8760) 
+  sc = JuMP.Containers.DenseAxisArray(zeros(length(config["countries"]), length(config["timeseries"]), config["timesteplength"]), config["countries"], config["timeseries"], 1:config["timesteplength"]) 
 
   # populate the array
   for t ∈ config["timeseries"], r ∈ config["countries"]
-    data_col = CountryData[t][!, r]
-    if length(data_col) != 8760
+    data_col = CountryData[t][1:config["timesteplength"], r]
+    @info "Timesteplength is $(config["timesteplength"])"
+    if length(data_col) != 8760 && config["timesteplength"] == 8760
       error("Time series for $r in $t does not have 8.760 entries.")
     else
       sc[r,t,:] .= data_col
@@ -77,7 +78,6 @@ function load_timeseries_data_full(; config::Dict{Any,Any})
   end
   return sc
 end
-
 
 
 
@@ -103,7 +103,7 @@ function load_data(;config::Dict{Any,Any})
 
     config["tech_mapping"] = Dict("Batt" => ["Batt_in", "Batt_out"])
 
-    if "Generator" ∈ names(df)
+    if "Generator" ∈ names(df) && n != "cap_init"
       default_value_storage!(df)
     end
 
@@ -118,6 +118,8 @@ function load_data(;config::Dict{Any,Any})
       data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, config["energy_carriers"])
     elseif n ∈ ["eta"]
       data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050)
+    else #emission budget
+      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050)
     end
   end
   return data_dict
@@ -189,8 +191,10 @@ end
 
 function load_cep_data_lines(; config::Dict{Any,Any})
 
+  
   # Read the sheet into a DataFrame
-  tab = XLSX.readtable(config["data_path"], "trade") |> DataFrame
+  df = XLSX.readtable(config["data_path"], "trade") |> DataFrame
+  tab = filter(row -> row["Node_start"] ∈ config["countries"] && row["Node_end"] ∈ config["countries"], df)
 
   techs = unique(tab[!, :Generator])
   lines_list = unique(tab[!, :Line])
@@ -212,7 +216,6 @@ function load_cep_data_lines(; config::Dict{Any,Any})
           @warn "No unique row found for Generator=$tech and Line=$line"
       end
   end
-
   return lines
 end
 

@@ -167,3 +167,30 @@ function aggregate_scenarios(; df::JuMP.Containers.DenseAxisArray)
     df_gen = df_gen/(size(df)[1])
     return df_gen
 end
+
+
+"""
+Returns a `DataFrame` with the values of the variables from the JuMP container `var`.
+The column names of the `DataFrame` can be specified for the indexing columns in `dim_names`,
+and the name of the data value column by a Symbol `value_col` e.g. :Value
+"""
+function convert_jump_container_to_df(; cep, config::Dict{Any, Any})
+
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢 = get_sets(cep=cep)
+
+    gen = JuMP.Containers.DenseAxisArray(
+        zeros(length(𝓡), length(𝓖), length(𝓨), length(config["energy_carriers"]), length(𝓣)),
+        𝓡, 𝓖, 𝓨, config["energy_carriers"], 𝓣
+    )
+    
+    for r ∈ 𝓡, g ∈ 𝓖, y ∈ 𝓨, c ∈ config["energy_carriers"], t ∈ 𝓣
+        try
+            gen[r, g, y, c, t] = value(cep.model[:gen][r, g, y, c, t])
+        catch e
+            @warn "Skipping (r=$r, g=$g, y=$y, c=$c, t=$t): $(e.msg)"
+            gen[r, g, y, c, t] = NaN  # or 0, or missing, depending on your needs
+        end
+    end
+    return gen
+
+end
