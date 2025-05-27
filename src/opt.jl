@@ -76,8 +76,8 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
 
     # generation variables
     @variable(cep.model, gen[r ∈ 𝓡 ,g ∈ 𝓖, y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
-    @variable(cep.model, ll[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣] ≥ 0)   # lost load / ENS
-    @variable(cep.model, ll_h2[r ∈ 𝓡, y ∈ 𝓨] ≥ 0)   # lost load / ENS
+    @variable(cep.model, ll[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ ["electricity", "H2"]] ≥ 0)   # lost load / ENS
+    #@variable(cep.model, ll_h2[r ∈ 𝓡, y ∈ 𝓨] ≥ 0)   # lost load / ENS
 
     @variable(cep.model, em[y ∈ 𝓨] ≥ 0)      # emission CO2 per year ##curtail,emt??
 
@@ -90,7 +90,11 @@ end
 
 
 
-function set_up_equations(; cep::OptModelCEP, ts_data::JuMP.Containers.DenseAxisArray, data::OptDataCEP, config::Dict{Any, Any}, kwargs...)
+function set_up_equations(; cep::OptModelCEP, 
+    ts_data::JuMP.Containers.DenseAxisArray, 
+    data::OptDataCEP, 
+    config::Dict{Any, Any}, 
+    kwargs...)
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
     data = data.data
@@ -99,28 +103,24 @@ function set_up_equations(; cep::OptModelCEP, ts_data::JuMP.Containers.DenseAxis
     emitting_fuels = [g for g ∈ 𝓖 if data["emission"][g] > 0]
 
     # energy balance equation for each energy carrier
-    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ setdiff(config["energy_carriers"], "H2")], 
+    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ config["energy_carriers"]], 
     sum(cep.model[:gen][r,g,y,c,t] for g ∈ cep.sets[c]) 
-    + (c == "electricity" ? cep.model[:ll][r,y,t] : 0)
+    + (c == "H2" ? cep.model[:ll][r,y,t,c] : 0)
+    + (c == "electricity" ? cep.model[:ll][r,y,t,c] : 0)
+    - (c == "H2" ? (data["demand"][r,y,"H2"]/8760) : 0)
     - (c == "electricity" ? (ts_data[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
     == 0)
-
-    # yearly energy balance constraint for h2
-    @constraint(cep.model, DemandH2[r ∈ 𝓡, y ∈ 𝓨], 
-    sum(cep.model[:gen][r,g,y,"H2",t] for g ∈ cep.sets["H2"], t ∈ 𝓣) 
-    + cep.model[:ll_h2][r,y] 
-    - data["demand"][r,y,"H2"] 
-    == 0)
+   
     
     # emission accounting
     @constraint(cep.model, EM[y ∈ 𝓨],cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
 
     # cost for lost load yearly 
-    @constraint(cep.model, CLL[y ∈ 𝓨], cep.model[:cll][y] == config["cll"] * (sum(cep.model[:ll][r,y,t] for r ∈ 𝓡, t ∈ 𝓣)+ sum(cep.model[:ll_h2][r,y] for r ∈ 𝓡) ))
+    @constraint(cep.model, CLL[y ∈ 𝓨], cep.model[:cll][y] == config["cll"] * (sum(cep.model[:ll][r,y,t,c] for r ∈ 𝓡, t ∈ 𝓣, c ∈ ["H2", "electricity"])))
 
     # limit max and min generation dispatchable and non dispatchable
     @constraint(cep.model, GenCapDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y])   
-    @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["cap"][r,g,y] * data["eta"][g,y] * ts_data[r,g,t])
+    @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y] * ts_data[r,g,t])
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ vcat(cep.sets["non_dispatch"],cep.sets["dispatch"]), c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
 
     setup_opt_opex!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
@@ -146,7 +146,7 @@ function set_up_equations(; cep::OptModelCEP, ts_data::JuMP.Containers.DenseAxis
         @constraint(cep.model, EM_zero[𝓨[end]], cep.model[:em][𝓨[end]] == 0)
     else
         # emission budget for each country individually
-        @constraint(cep.model, EM_budget[𝓨], cep.model[:em][𝓨] == sum(data["budget"][r,y] for r ∈ 𝓡))
+        @constraint(cep.model, EM_budget[y in 𝓨], cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
     end
 end
 
