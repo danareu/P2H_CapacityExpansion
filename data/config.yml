@@ -16,7 +16,7 @@ Load:
 
 year: 2020
 
-timesteplength: 24
+timesteplength: 1000
 
 SCTOLERANCE: 10.0e-6
 
@@ -24,6 +24,7 @@ energy_carriers:
   - electricity
   - H2
   - electricity_store
+  - H2_store
 
 dispatch: true
 
@@ -152,3 +153,39 @@ techs:
           carrier: H2
       constraints:
           efficiency: 0.999995 #[1/km]
+
+  D_Gas_H2_in:
+    tech_group: conversion
+    color: orange
+    input:
+      carrier: H2
+    output:
+      carrier: H2_store
+    
+  
+  D_Gas_H2_out:
+    tech_group: conversion
+    color: orange
+    input:
+      carrier: H2_store
+    output:
+      carrier: H2
+    
+  
+  S_Gas_H2:
+    tech_group: storage
+    color: orange
+    input:
+      carrier: H2_store
+    output:
+      carrier: H2_store
+    constraints:
+      P2E: 168
+
+  P_H2_OCGT:
+    tech_group: dispatchable_generation
+    input:
+      carrier: H2
+    output:
+      carrier: electricity
+
