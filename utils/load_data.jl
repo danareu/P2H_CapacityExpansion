@@ -103,21 +103,20 @@ function load_data(;config::Dict{Any,Any})
 
     config["tech_mapping"] = Dict("Batt" => ["Batt_in", "Batt_out"])
 
-    if "Generator" ∈ names(df) && n != "cap_init"
-      default_value_storage!(df)
-    end
 
     # Convert to Jump Density Array
     if n ∈ ["c_CAPEX", "c_var", "c_fix"]
-      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050)
-    elseif n ∈ ["cap", "cap_init"]
-      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050)
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050; default=0.0001)
+    elseif n ∈ ["cap"]
+      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=99999)
+    elseif n ∈ ["cap_init"]
+      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=0.0)
     elseif n ∈ ["lifetime", "emission"]
-      data_dict[n] = create_array_from_df(df, keys(config["techs"]))
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]); default=0.0)
     elseif n ∈ ["demand"]
-      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, config["energy_carriers"])
+      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, config["energy_carriers"]; default=0.0)
     elseif n ∈ ["eta"]
-      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050)
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050; default=1.0)
     else #emission budget
       data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050)
     end
@@ -128,21 +127,20 @@ end
 
 
 
-function create_array_from_df(df::DataFrame, els...)
+function create_array_from_df(df::DataFrame, els...; default=0.0)
 
   A = JuMP.Containers.DenseAxisArray(
-    zeros(length.(els)...), els...)
+      fill(default, length.(els)...), els...)
 
-  # order columns 
-  # Fill in values from Excel
   for r in eachrow(df)
       try
-          A[r[1:end-1]...] = r.Value 
+          A[r[1:end-1]...] = r.Value
       catch err
           @debug err
       end
   end
-  return A 
+
+  return A
 end
 
 
@@ -157,28 +155,6 @@ function average_ts_data(; ts_data::JuMP.Containers.DenseAxisArray)
   return ts_data_2 / length(axes(ts_data)[3])
 end
 
-
-
-
-function default_value_storage!(df)
-  # map general tech => subtechs
-  tech_expansions = Dict(
-    "D_Battery_Li-Ion" => ["D_Battery_Li-Ion_in", "D_Battery_Li-Ion_out"]
-  )
-
-  for (base_tech, expanded) ∈ tech_expansions
-    if base_tech ∈ df[!, "Generator"]
-        rows = filter(row -> row["Generator"] == base_tech, df)
-        for new_tech in expanded
-            new_rows = deepcopy(rows)
-            new_rows[!, "Generator"] .= new_tech
-            append!(df, new_rows)
-        end
-        filter!(row -> row["Generator"] != base_tech, df)
-    end
-  end
-  return df
-end
 
 function load_cep_data(; config::Dict{Any,Any})
 
