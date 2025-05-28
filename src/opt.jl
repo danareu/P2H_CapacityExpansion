@@ -105,13 +105,11 @@ function set_up_equations(; cep::OptModelCEP,
     # energy balance equation for each energy carrier
     @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ config["energy_carriers"]], 
     sum(cep.model[:gen][r,g,y,c,t] for g ∈ cep.sets[c]) 
-    + (c == "H2" ? cep.model[:ll][r,y,t,c] : 0)
-    + (c == "electricity" ? cep.model[:ll][r,y,t,c] : 0)
-    - (c == "H2" ? (data["demand"][r,y,"H2"]/8760) : 0)
+    + (c ∈ ["H2", "electricity"] ? cep.model[:ll][r,y,t,c] : 0)
+    - (c == "H2" ? (data["demand"][r,y,"H2"]/config["timesteplength"]) : 0)
     - (c == "electricity" ? (ts_data[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
     == 0)
-   
-    
+       
     # emission accounting
     @constraint(cep.model, EM[y ∈ 𝓨],cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
 
