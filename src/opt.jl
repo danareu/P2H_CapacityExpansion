@@ -270,7 +270,10 @@ function setup_opt_objective!(cep::OptModelCEP,
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     if !config["dispatch"]
-        @objective(cep.model, Min, sum(1/((1+config["r"])^(y-𝓨[1]))*(cep.model[:capex][y,g] for g ∈ setdiff(𝓖, cep.sets["transmission"]) + sum(NewTradeCapacityCosts[g,y] for g ∈ cep.sets["transmission"])) for y ∈ 𝓨) + sum(1/((1+config["r"])^(y-𝓨[1])) * sum(sum(cep.model[:opex][y,g] for g ∈ 𝓖) + cep.model[:cll][y] for y ∈ 𝓨)))  
+        @objective(cep.model, Min, sum(1/((1+config["r"])^(y-𝓨[1]))*
+        (cep.model[:capex][y,g] for g ∈ setdiff(𝓖, cep.sets["transmission"]) 
+        + sum(NewTradeCapacityCosts[g,y] for g ∈ cep.sets["transmission"])) for y ∈ 𝓨) 
+        + sum(1/((1+config["r"])^(y-𝓨[1])) * sum(sum(cep.model[:opex][y,g] for g ∈ 𝓖) + cep.model[:cll][y] for y ∈ 𝓨)))  
     else            
         @objective(cep.model, Min, sum(sum(cep.model[:opex][y,g] for g ∈ 𝓖) + cep.model[:cll][y] for y ∈ 𝓨))  
     end
@@ -374,6 +377,12 @@ function optimize_and_output(; cep::OptModelCEP,
             for r ∈ axes(data.data["cap_init"])[1], g ∈ axes(data.data["cap_init"])[2], y ∈ axes(data.data["cap_init"])[3] 
                 val = data.data["cap_init"][r,g,y]
                 println(file, "Capacity$r$g$y = $val") 
+            end
+
+            ## write the dual variables aka shadow prices 
+            for r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒
+                val = dual(cep.model[:EnergyBalance][r, y, t, c])
+                println(file, "Price[$r,$y,$t,$c] = $val")
             end
 
         end
