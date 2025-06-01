@@ -114,7 +114,7 @@ function load_data(;config::Dict{Any,Any})
     elseif n ∈ ["lifetime", "emission"]
       data_dict[n] = create_array_from_df(df, keys(config["techs"]); default=0.0)
     elseif n ∈ ["demand"]
-      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, config["energy_carriers"]; default=0.0)
+      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, ["H2", "electricity"]; default=0.0)
     elseif n ∈ ["eta"]
       data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050; default=1.0)
     else #emission budget

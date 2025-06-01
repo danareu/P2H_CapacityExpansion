@@ -14,10 +14,14 @@ function setup_opt_set!(sets::Dict{Any, Any},
     sets["transmission"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "transmission"]  
     sets["nodes"] = setdiff(keys(config["techs"]), sets["transmission"])
     sets["lines"] = unique([i[2] for i ∈ keys(data.lines)])
+    energy_carriers = unique([config["techs"][t]["output"]["carrier"] for t ∈ keys(config["techs"])])
+    sets["energy_carriers"] = energy_carriers
+    println(energy_carriers)
+    
     # the structure describes if the capacity of this tech is either setup on a node or along a line
 
     for i ∈ ["input", "output"]
-        sets[i] = Dict(c => [tech for (tech, spec) in config["techs"] if haskey(spec, i) && get(spec[i], "carrier", nothing) == c] for c ∈ config["energy_carriers"])
+        sets[i] = Dict(c => [tech for (tech, spec) in config["techs"] if haskey(spec, i) && get(spec[i], "carrier", nothing) == c] for c ∈ energy_carriers)
     end
 
     return sets
@@ -86,6 +90,7 @@ function get_sets(; cep)
         𝓡 = cep.sets["regions"],
         𝓢 = cep.sets["storage_techs"],
         𝓛 = cep.sets["lines"],
+        𝓒 = cep.sets["energy_carriers"]
     )
 end
 

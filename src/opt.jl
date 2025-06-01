@@ -63,7 +63,7 @@ end
 
 function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     if !config["dispatch"]
         @info "Investment mode is on."
@@ -96,17 +96,17 @@ function set_up_equations(; cep::OptModelCEP,
     config::Dict{Any, Any}, 
     kwargs...)
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     data = data.data
 
     ## how to handle different fuels
     emitting_fuels = [g for g ∈ 𝓖 if data["emission"][g] > 0]
 
     # energy balance equation for each energy carrier
-    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ config["energy_carriers"]], 
+    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒], 
     sum(cep.model[:gen][r,g,y,c,t] for g ∈ cep.sets[c]) 
     + (c ∈ ["H2", "electricity"] ? cep.model[:ll][r,y,t,c] : 0)
-    - (c == "H2" ? (data["demand"][r,y,"H2"]/config["timesteplength"]) : 0)
+    - (c == "H2" ? (data["demand"][r,y,"H2"]/8760) : 0)
     - (c == "electricity" ? (ts_data[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
     == 0)
        
@@ -153,7 +153,7 @@ function setup_opt_storage!(cep::OptModelCEP,
     config::Dict{Any, Any}, 
     data::OptDataCEP)
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     data = data.data
 
     @variable(cep.model, StorageLevel[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣] ≥ 0)
@@ -201,7 +201,7 @@ function setup_opt_conversion!(cep::OptModelCEP,
     config::Dict{Any, Any},
     data::OptDataCEP)   
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     data = data.data
 
     # Calculate the input generation 
@@ -228,7 +228,7 @@ function set_opt_transmission!(cep::OptModelCEP,
     config::Dict{Any, Any},
     data::OptDataCEP)
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     lines = data.lines
     data = data.data
 
@@ -267,7 +267,7 @@ Calculate total system costs and set as objective
 function setup_opt_objective!(cep::OptModelCEP, 
     config::Dict{Any, Any})
     ## OBJECTIVE ##
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     if !config["dispatch"]
         @objective(cep.model, Min, sum(1/((1+config["r"])^(y-𝓨[1]))*(cep.model[:capex][y,g] for g ∈ setdiff(𝓖, cep.sets["transmission"]) + sum(NewTradeCapacityCosts[g,y] for g ∈ cep.sets["transmission"])) for y ∈ 𝓨) + sum(1/((1+config["r"])^(y-𝓨[1])) * sum(sum(cep.model[:opex][y,g] for g ∈ 𝓖) + cep.model[:cll][y] for y ∈ 𝓨)))  
@@ -288,7 +288,7 @@ function setup_opt_capex!(cep::OptModelCEP,
     config::Dict{Any, Any}, 
     tech_group::String)
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], sum(cep.model[:NewCapacity][r,g,y] for r ∈ 𝓡) * data["c_CAPEX"][g,y] == cep.model[:capex][y,g]) 
 
     return cep
@@ -306,7 +306,7 @@ function setup_opt_opex!(cep::OptModelCEP,
     tech_group::Vector{String}, 
     sign_generation::Int64)
 
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛 = get_sets(cep=cep)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
    
     # fixed and variable costs for operation
     @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], cep.model[:opex][y,g] == sum(config["dispatch"] ? data["cap"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y] for r ∈ 𝓡) * data["c_fix"][g, y] 
@@ -325,6 +325,7 @@ function optimize_and_output(; cep::OptModelCEP,
     ts_data)
 
     optimize!(cep.model)
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     status=Symbol(termination_status(cep.model))
     println(status)
@@ -370,7 +371,7 @@ function optimize_and_output(; cep::OptModelCEP,
                 println(file, "$str = $val")
             end
             
-            for r in axes(data.data["cap_init"])[1], g in axes(data.data["cap_init"])[2], y in axes(data.data["cap_init"])[3] 
+            for r ∈ axes(data.data["cap_init"])[1], g ∈ axes(data.data["cap_init"])[2], y ∈ axes(data.data["cap_init"])[3] 
                 val = data.data["cap_init"][r,g,y]
                 println(file, "Capacity$r$g$y = $val") 
             end
