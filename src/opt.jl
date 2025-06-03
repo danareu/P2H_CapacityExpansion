@@ -159,7 +159,7 @@ function setup_opt_storage!(cep::OptModelCEP,
     @variable(cep.model, StorageLevel[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣] ≥ 0)
 
     # Set storage level at beginning and end of year equal
-    @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:StorageLevel][r,s,y,𝓣[end]] == (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y])*0.5)
+    @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:StorageLevel][r,s,y,𝓣[end]] == (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]) * config["techs"][s]["constraints"]["SOC_Start"])
 
     # charging Soc according to max storage level 
     @constraint(cep.model, SoC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], cep.model[:StorageLevel][r,s,y,t] ≤ (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]))
@@ -169,7 +169,7 @@ function setup_opt_storage!(cep::OptModelCEP,
         # limit investments p/e ratio
             # Connect the previous storage level with the new storage level
         @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
-        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : cep.model[:TotalCapacityAnnual][r,s,y]*0.5)
+        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : cep.model[:TotalCapacityAnnual][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"])
         - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
         == cep.model[:StorageLevel][r,s,y,t] 
         )
@@ -181,7 +181,7 @@ function setup_opt_storage!(cep::OptModelCEP,
     
     else
         @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
-        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : data["cap_init"][r,s,y]*0.5)
+        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : data["cap_init"][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"])
         - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
         == cep.model[:StorageLevel][r,s,y,t] 
         )   
@@ -234,7 +234,6 @@ function set_opt_transmission!(cep::OptModelCEP,
 
     ## VARIABLE ##
     @variable(cep.model, FLOW[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣] >= 0)
-    ## define only for avaliable 
 
     if !config["dispatch"]
         @variable(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨]  >= 0)
@@ -252,9 +251,11 @@ function set_opt_transmission!(cep::OptModelCEP,
         JuMP.fix.(cep.model[:NewTradeCapacity][:, :, 𝓨[1]], 0; force=true)
         JuMP.fix.(cep.model[:NewTradeCapacityCosts][:, 𝓨[1]], 0; force=true)
     end
-
-    @constraint(cep.model, Nettrade[r ∈ 𝓡, g ∈ cep.sets["transmission"], y ∈ 𝓨, t ∈ 𝓣], cep.model[:gen][r,g,y,config["techs"][g]["input"]["carrier"],t] == sum((cep.model[:FLOW][g, line_end,"uniform",y,t] - cep.model[:FLOW][g,line_end,"opposite",y,t]/lines[(g,line_end)].eff) for line_end ∈ [l for ((t, l), v) ∈ lines if t == g && v.node_end == r]) - 
-    sum((-cep.model[:FLOW][g,line_start,"uniform",y,t]/lines[(g,line_start)].eff + cep.model[:FLOW][g,line_start,"opposite",y,t]) for line_start ∈ [l for ((t,l), v) ∈ lines if t == g && v.node_start == r]))
+    
+    @constraint(cep.model, Nettrade[r ∈ 𝓡, g ∈ cep.sets["transmission"], y ∈ 𝓨, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]], 
+    cep.model[:gen][r,g,y,c,t] 
+    == sum(cep.model[:FLOW][g, line_end,"uniform",y,t] - cep.model[:FLOW][g,line_end,"opposite",y,t]/lines[(g,line_end)].eff for line_end ∈ [l for ((t, l), v) ∈ lines if t == g && v.node_end == r]) + 
+    sum(cep.model[:FLOW][g,line_start,"opposite",y,t] - cep.model[:FLOW][g,line_start,"uniform",y,t]/lines[(g,line_start)].eff for line_start ∈ [l for ((t,l), v) ∈ lines if t == g && v.node_start == r]))
     
     return cep
 end
