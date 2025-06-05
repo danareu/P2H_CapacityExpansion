@@ -146,7 +146,11 @@ function set_up_equations(; cep::OptModelCEP,
         @constraint(cep.model, EM_zero[𝓨[end]], cep.model[:em][𝓨[end]] == 0)
     else
         # emission budget for each country individually
-        @constraint(cep.model, EM_budget[y in 𝓨], cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
+        for y ∈ 𝓨
+            if sum(data["budget"][r,y] for r ∈ 𝓡) > 0 
+                @constraint(cep.model, cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
+            end 
+        end
     end
 end
 

@@ -1,4 +1,4 @@
-data_path: "/cluster/home/danare/git/P2H_CapacityExpansion/data/data13.xlsx"
+data_path: "/cluster/home/danare/git/P2H_CapacityExpansion/data/data16.xlsx"
 
 
 # cost for lost load
@@ -10,21 +10,23 @@ r: 0.04
 # regions to be considered
 countries:
   - DE
+  - FR
+  - UK
+  - BE
+  - NL
+  - DK
+  - SE
+  - NO
 
 Load:
   - Demand
 
 year: 2020
 
-timesteplength: 1000
+timesteplength: 8760
 
 SCTOLERANCE: 10.0e-6
 
-energy_carriers:
-  - electricity
-  - H2
-  - electricity_store
-  - H2_store
 
 dispatch: true
 
@@ -34,35 +36,39 @@ timeseries:
   - P_Wind_Offshore_Transitional
   - P_PV_Utility_Avg
   - Demand
-
+  - inflow
 
 
 techs:
   P_Wind_Offshore_Transitional:
+    inv: true
     tech_group: non_dispatchable_generation
     color: "#00E5FF"
     input:
-      timeseries: wind
+      timeseries: P_Wind_Offshore_Transitional
     output:
       carrier: electricity
 
   P_Wind_Onshore_Avg:
+    inv: true
     tech_group: non_dispatchable_generation
     color: "#9370DB"
     input:
-      timeseries: wind
+      timeseries: P_Wind_Onshore_Avg
     output:
       carrier: electricity
 
   P_PV_Utility_Avg:
+    inv: true
     tech_group: non_dispatchable_generation
     color: "#FFEB3B"
     input:
-      timeseries: pv
+      timeseries: P_PV_Utility_Avg
     output:
       carrier: electricity
 
   X_Electrolysis:
+    inv: true
     tech_group: conversion
     color: rgb(191,0,191)
     input:
@@ -71,6 +77,7 @@ techs:
       carrier: H2
 
   P_Nuclear:
+    inv: true
     tech_group: dispatchable_generation
     color: rgb(112,112,112)
     input:
@@ -79,6 +86,7 @@ techs:
       carrier: electricity
 
   P_Coal_Hardcoal:
+    inv: true
     tech_group: dispatchable_generation
     color: "#424242"
     input:
@@ -87,6 +95,7 @@ techs:
       carrier: electricity
 
   P_Gas_CCGT:
+    inv: true
     tech_group: dispatchable_generation
     color: "#CFD8DC"
     input:
@@ -95,6 +104,7 @@ techs:
       carrier: electricity
 
   P_Biomass:
+    inv: true
     tech_group: dispatchable_generation
     color: "#4CAF50"
     input:
@@ -104,35 +114,40 @@ techs:
 
 
   D_Battery_Li-Ion_in:
-    tech_group: conversion
+    inv: false
+    tech_group: store_charging
     color: orange
     input:
       carrier: electricity
     output:
-      carrier: electricity_store
+      carrier: electricity
     
   
   D_Battery_Li-Ion_out:
-    tech_group: conversion
+    inv: true
+    tech_group: store_discharging
     color: orange
     input:
-      carrier: electricity_store
+      carrier: electricity
     output:
       carrier: electricity
     
   
   S_Battery_Li-Ion:
+    inv: true
     tech_group: storage
     color: orange
     input:
-      carrier: electricity_store
+      carrier: electricity
     output:
-      carrier: electricity_store
+      carrier: electricity
     constraints:
       P2E: 4
+      SOC_Start: 0.5
 
 
   trans_elec:
+      inv: true
       tech_group: transmission
       investment_costs: 0.86416838 
       efficiency: 0.99997 
@@ -144,6 +159,7 @@ techs:
           efficiency: 0.99997 #[1/km]
 
   trans_H2:
+      inv: true
       tech_group: transmission
       efficiency: 0.999995
       investment_costs: 0.00079909
@@ -155,37 +171,91 @@ techs:
           efficiency: 0.999995 #[1/km]
 
   D_Gas_H2_in:
-    tech_group: conversion
+    inv: false
+    tech_group: store_charging
     color: orange
     input:
       carrier: H2
     output:
-      carrier: H2_store
+      carrier: H2
     
   
   D_Gas_H2_out:
-    tech_group: conversion
+    inv: true
+    tech_group: store_discharging
     color: orange
     input:
-      carrier: H2_store
+      carrier: H2
     output:
       carrier: H2
     
   
   S_Gas_H2:
+    inv: true
     tech_group: storage
     color: orange
     input:
-      carrier: H2_store
+      carrier: H2
     output:
-      carrier: H2_store
+      carrier: H2
     constraints:
       P2E: 168
+      SOC_Start: 0.5
 
   P_H2_OCGT:
-    tech_group: dispatchable_generation
+    inv: true
+    tech_group: conversion
     input:
       carrier: H2
     output:
       carrier: electricity
 
+
+  S_Hydro_Reservoir:
+    inv: false
+    tech_group: storage
+    input:
+      timeseries: inflow
+    output:
+      carrier: electricity
+    constraints:
+      SOC_Start: 0.2
+
+
+  D_Hydro_Reservoir_out:
+    inv: false
+    tech_group: store_discharging
+    input:
+      carrier: electricity
+    output:
+      carrier: electricity
+  
+
+  S_PHS:
+    inv: false
+    tech_group: storage
+    input:
+      carrier: electricity
+    output:
+      carrier: electricity
+    constraints:
+      P2E: 50
+      SOC_Start: 0.5
+
+
+  D_PHS_in:
+    inv: false
+    tech_group: store_charging
+    input:
+      carrier: electricity
+    output:
+      carrier: electricity
+
+  
+  D_PHS_out:
+    inv: false
+    tech_group: store_discharging
+    input:
+      carrier: electricity
+    output:
+      carrier: electricity
