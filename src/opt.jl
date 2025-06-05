@@ -68,14 +68,16 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
     if !config["dispatch"]
         @info "Investment mode is on."
         # capacity variables
-        @variable(cep.model, TotalCapacityAnnual[r ∈ 𝓡 ,g ∈ sets["nodes"], y ∈ 𝓨] ≥ 0) # old and new capacity for generators
-        @variable(cep.model, AccumulatedNewCapacity[r ∈ 𝓡 ,g ∈ sets["nodes"], y ∈ 𝓨] ≥ 0) # accumulated capacity according to lifetime for generators
-        @variable(cep.model, NewCapacity[r ∈ 𝓡 ,g ∈ sets["nodes"], y ∈ 𝓨] ≥ 0)           # new capacity investments for generators      
-        @variable(cep.model, capex[y ∈ 𝓨, g ∈ sets["nodes"]] ≥ 0)  # capital investment costs for generators
+        @variable(cep.model, TotalCapacityAnnual[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0) # old and new capacity for generators
+        @variable(cep.model, AccumulatedNewCapacity[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0) # accumulated capacity according to lifetime for generators
+        @variable(cep.model, NewCapacity[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0)           # new capacity investments for generators      
+        @variable(cep.model, COST[z ∈ ["cap", "fix", "var"], y ∈ 𝓨, g ∈ cep.sets["nodes"]] ≥ 0) 
+    else
+        @variable(cep.model, COST[z ∈ ["fix", "var"], y ∈ 𝓨, g ∈ 𝓖] ≥ 0) 
     end
 
     # generation variables
-    @variable(cep.model, gen[r ∈ 𝓡 ,g ∈ 𝓖, y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
+    @variable(cep.model, gen[r ∈ 𝓡 , g ∈ setdiff(𝓖, cep.sets["storage_techs"]), y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
     @variable(cep.model, ll[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ ["electricity", "H2"]] ≥ 0)   # lost load / ENS
     #@variable(cep.model, ll_h2[r ∈ 𝓡, y ∈ 𝓨] ≥ 0)   # lost load / ENS
 
@@ -83,7 +85,6 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
 
     # cost variables
     @variable(cep.model, cll[y ∈ 𝓨] ≥ 0)  # costs for lost load yearly
-    @variable(cep.model, opex[y ∈ 𝓨, g ∈ 𝓖] ≥ 0) 
 
     return cep
 end
@@ -121,21 +122,22 @@ function set_up_equations(; cep::OptModelCEP,
     @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y] * ts_data[r,g,t])
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ vcat(cep.sets["non_dispatch"],cep.sets["dispatch"]), c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
 
-    setup_opt_opex!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
+    setup_opt_costs_var!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
+    setup_opt_costs_fix!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]))
 
     if !config["dispatch"]
         # no investments in 2020
         JuMP.fix.(cep.model[:AccumulatedNewCapacity][:, :, 𝓨[1]], 0; force=true)
         JuMP.fix.(cep.model[:NewCapacity][:, :, 𝓨[1]], 0; force=true)
 
-        setup_opt_capex!(cep, config, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]))
+        setup_opt_costs_cap!(cep, config, cep.sets["invest_tech"])
 
         # new capacity investments 
-        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ 𝓖, y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + cep.model[:NewCapacity][r,g,y] + data["cap_init"][r,g,y])    
+        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + cep.model[:NewCapacity][r,g,y] + data["cap_init"][r,g,y])    
         # accumulated capacity
-        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ 𝓖, y in 𝓨[2:end]], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,hat_y] for hat_y in 𝓨[1]:10:y if y - 𝓨[1] ≤ data["lifetime"][g]))
+        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨[2:end]], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,hat_y] for hat_y in 𝓨[1]:10:y if y - 𝓨[1] ≤ data["lifetime"][g]))
         # max potential capacity constraint
-        for r ∈ 𝓡, g ∈ 𝓖, y ∈ 𝓨[2:end]
+        for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨[2:end]
             if data["cap"][r, g, y] > 0
                 @constraint(cep.model, MaxCap[r, g, y], cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
             end
@@ -257,9 +259,11 @@ function setup_opt_conversion!(cep::OptModelCEP,
     @constraint(cep.model, Outputconversion[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["conversion"], t ∈ 𝓣], cep.model[:gen][r,g,y,config["techs"][g]["output"]["carrier"],t] ==  (-1) * cep.model[:gen][r,g,y,config["techs"][g]["input"]["carrier"],t] * data["eta"][g,y])
 
     # add the costs 
-    setup_opt_opex!(cep, config, data, cep.sets["conversion"], -1)
+    setup_opt_costs_fix!(cep, config, data, cep.sets["conversion"])
+    setup_opt_costs_var!(cep, config, data, cep.sets["conversion"], -1)
+
     if !config["dispatch"]
-        setup_opt_capex!(cep, config, cep.sets["conversion"])
+        setup_opt_costs_cap!(cep, config, cep.sets["conversion"])
     end
 
     return cep
@@ -301,6 +305,8 @@ function set_opt_transmission!(cep::OptModelCEP,
     cep.model[:gen][r,g,y,c,t] 
     == sum(cep.model[:FLOW][g, line_end,"uniform",y,t] - cep.model[:FLOW][g,line_end,"opposite",y,t]/lines[(g,line_end)].eff for line_end ∈ [l for ((t, l), v) ∈ lines if t == g && v.node_end == r]) + 
     sum(cep.model[:FLOW][g,line_start,"opposite",y,t] - cep.model[:FLOW][g,line_start,"uniform",y,t]/lines[(g,line_start)].eff for line_start ∈ [l for ((t,l), v) ∈ lines if t == g && v.node_start == r]))
+
+    setup_opt_costs_var!(cep, config, data, cep.sets["transmission"], 1)
     
     return cep
 end
@@ -315,13 +321,16 @@ function setup_opt_objective!(cep::OptModelCEP,
     ## OBJECTIVE ##
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
+    opex = sum(sum(cep.model[:COST]["fix",y,g] for g ∈ 𝓖) + sum(cep.model[:COST]["var",y,g] for g ∈ setdiff(𝓖,cep.sets["storage_techs"])) + cep.model[:cll][y] for y ∈ 𝓨)
+
+
     if !config["dispatch"]
         @objective(cep.model, Min, sum(1/((1+config["r"])^(y-𝓨[1]))*
-        (cep.model[:capex][y,g] for g ∈ setdiff(𝓖, cep.sets["transmission"]) 
-        + sum(NewTradeCapacityCosts[g,y] for g ∈ cep.sets["transmission"])) for y ∈ 𝓨) 
-        + sum(1/((1+config["r"])^(y-𝓨[1])) * sum(sum(cep.model[:opex][y,g] for g ∈ 𝓖) + cep.model[:cll][y] for y ∈ 𝓨)))  
+        (cep.model[:COST]["cap",y,g] for g ∈ cep.sets["nodes"]) 
+        + sum(NewTradeCapacityCosts[g,y] for g ∈ cep.sets["transmission"]) for y ∈ 𝓨)
+        + sum(1/((1+config["r"])^(y-𝓨[1])) * opex))  
     else            
-        @objective(cep.model, Min, sum(sum(cep.model[:opex][y,g] for g ∈ 𝓖) + cep.model[:cll][y] for y ∈ 𝓨))  
+        @objective(cep.model, Min, opex)  
     end
   return cep
 end
@@ -329,27 +338,49 @@ end
 
 
 """
-     setup_opt_costs!(cep::OptModelCEP, config::Dict{Any, Any}, tech_group::String; sign_generation::Number=1)
-add operational costs for the technology defined by `tech_group`
+     setup_opt_costs_cap!(cep::OptModelCEP, config::Dict{Any, Any}, tech_group::String)
+add capital costs for the technology defined by `tech_group`
 """
 
-function setup_opt_capex!(cep::OptModelCEP, 
+function setup_opt_costs_cap!(cep::OptModelCEP, 
     config::Dict{Any, Any}, 
     tech_group::String)
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
-    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], sum(cep.model[:NewCapacity][r,g,y] for r ∈ 𝓡) * data["c_CAPEX"][g,y] == cep.model[:capex][y,g]) 
+
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], sum(cep.model[:NewCapacity][r,g,y] for r ∈ 𝓡) * data["c_CAPEX"][g,y] == cep.model[:COST]["CAP",y,g]) 
 
     return cep
 end
 
 
 """
-     setup_opt_costs!(cep::OptModelCEP, config::Dict{Any, Any}, tech_group::String; sign_generation::Number=1)
-add capacity costs for the technology defined by `tech_group`
+     setup_opt_costs_fix!(cep::OptModelCEP, config::Dict{Any, Any}, tech_group::String)
+add fixed costs for the technology defined by `tech_group`
 """
 
-function setup_opt_opex!(cep::OptModelCEP, 
+function setup_opt_costs_fix!(cep::OptModelCEP, 
+    config::Dict{Any, Any}, 
+    data::Dict{Any, Any},
+    tech_group::Vector{String}, 
+    )
+
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
+   
+    # fixed costs for operation
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], cep.model[:COST]["fix", y,g] == sum(config["dispatch"] ? data["cap"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y] for r ∈ 𝓡) * data["c_fix"][g, y])
+
+    return cep
+end
+
+
+
+"""
+     setup_opt_costs_var!(cep::OptModelCEP, config::Dict{Any, Any}, tech_group::String; sign_generation::Number=1)
+add variable costs for the technology defined by `tech_group`
+"""
+
+function setup_opt_costs_var!(cep::OptModelCEP, 
     config::Dict{Any, Any}, 
     data::Dict{Any, Any},
     tech_group::Vector{String}, 
@@ -357,12 +388,13 @@ function setup_opt_opex!(cep::OptModelCEP,
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
    
-    # fixed and variable costs for operation
-    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], cep.model[:opex][y,g] == sum(config["dispatch"] ? data["cap"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y] for r ∈ 𝓡) * data["c_fix"][g, y] 
-    + sign_generation * (sum(sum(cep.model[:gen][r,g,y,c,t] for r ∈ 𝓡, t ∈ 𝓣) * data["c_var"][g, y] for c ∈ cep.sets["carrier"][g])))
+    # variable costs for operation
+
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], cep.model[:COST]["var", y,g] == sign_generation * (sum(sum(cep.model[:gen][r,g,y,c,t] for r ∈ 𝓡, t ∈ 𝓣) * data["c_var"][g, y] for c ∈ cep.sets["carrier"][g])))
 
     return cep
 end
+
 
 
 
