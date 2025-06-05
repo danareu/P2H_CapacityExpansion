@@ -12,11 +12,13 @@ function setup_opt_set!(sets::Dict{Any, Any},
     sets["non_dispatch"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "") == "non_dispatchable_generation"]
     sets["conversion"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "conversion"]  
     sets["transmission"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "transmission"]  
+    sets["charging"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "store_charging"] 
+    sets["discharging"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "store_discharging"] 
     sets["nodes"] = setdiff(keys(config["techs"]), sets["transmission"])
+    sets["invest_tech"] = setdiff([key for (key, val) ∈ config["techs"] if get(val, "inv", "")  == true], [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "transmission"] ) 
     sets["lines"] = unique([i[2] for i ∈ keys(data.lines)])
     energy_carriers = unique([config["techs"][t]["output"]["carrier"] for t ∈ keys(config["techs"])])
     sets["energy_carriers"] = energy_carriers
-    println(energy_carriers)
     
     # the structure describes if the capacity of this tech is either setup on a node or along a line
 

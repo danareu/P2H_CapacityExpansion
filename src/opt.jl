@@ -22,7 +22,7 @@ function run_opt(; ts_data,
 
     @info "Setting up the optimization equations ..."
     set_up_equations(cep=cep, ts_data=ts_data, data=data, config=config)
-    setup_opt_storage!(cep, config, data)
+    setup_opt_storage!(cep, ts_data, config, data)
     setup_opt_conversion!(cep, config, data)    
     set_opt_transmission!(cep, config, data)
     setup_opt_objective!(cep, config)
@@ -104,7 +104,7 @@ function set_up_equations(; cep::OptModelCEP,
 
     # energy balance equation for each energy carrier
     @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒], 
-    sum(cep.model[:gen][r,g,y,c,t] for g ∈ cep.sets[c]) 
+    sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) 
     + (c ∈ ["H2", "electricity"] ? cep.model[:ll][r,y,t,c] : 0)
     - (c == "H2" ? (data["demand"][r,y,"H2"]/8760) : 0)
     - (c == "electricity" ? (ts_data[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
@@ -150,45 +150,90 @@ end
 
 
 function setup_opt_storage!(cep::OptModelCEP, 
+    ts_data::JuMP.Containers.DenseAxisArray,  
     config::Dict{Any, Any}, 
     data::OptDataCEP)
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     data = data.data
 
-    @variable(cep.model, StorageLevel[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣] ≥ 0)
+    ## STORAGE LEVEL VARIABLE ##
+    @variable(cep.model, SOC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣] ≥ 0)
 
+
+    ## STORAGE LEVEL CONSTRAINTS ##
     # Set storage level at beginning and end of year equal
-    @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:StorageLevel][r,s,y,𝓣[end]] == (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]) * config["techs"][s]["constraints"]["SOC_Start"])
+    @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:SOC][r,s,y,𝓣[end]] == (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]) * config["techs"][s]["constraints"]["SOC_Start"])
 
-    # charging Soc according to max storage level 
-    @constraint(cep.model, SoC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], cep.model[:StorageLevel][r,s,y,t] ≤ (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]))
-    setup_opt_opex!(cep, config, data, 𝓢, 1)
+    # Soc according to max storage level 
+    @constraint(cep.model, SoC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], cep.model[:SOC][r,s,y,t] ≤ (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]))
+
+    # define fixed costs only
+    setup_opt_costs_fix!(cep, config, data, 𝓢)
+    
+    # define charging and discharging operations
+    setup_opt_storage_flows!(cep, config, data)
     
     if !config["dispatch"]
-        # limit investments p/e ratio
             # Connect the previous storage level with the new storage level
         @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
-        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : cep.model[:TotalCapacityAnnual][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"])
-        - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
-        == cep.model[:StorageLevel][r,s,y,t] 
+        (t > 1 ? cep.model[:SOC][r,s,y,t-1] : cep.model[:TotalCapacityAnnual][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"]) +
+        ("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  ts_data[r,"inflow",t]) 
+        - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t]
+        == cep.model[:SOC][r,s,y,t] 
         )
-        setup_opt_capex!(cep, config, 𝓢)
+        setup_opt_costs_cap!(cep, config, 𝓢)
 
         @constraint(cep.model, P2E_ratio[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_in",y] * config["techs"][s]["constraints"]["P2E"]  ≤ cep.model[:TotalCapacityAnnual][r,s,y])
         # charging and discharging investments are the same
+        # TODO avoid double charging costs 
         @constraint(cep.model, Discharg_Charge[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_in",y] == cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_out",y])
     
     else
-        @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
-        (t > 1 ? cep.model[:StorageLevel][r,s,y,t-1] : data["cap_init"][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"])
-        - cep.model[:gen][r,s,y,config["techs"][s]["input"]["carrier"],t]
-        == cep.model[:StorageLevel][r,s,y,t] 
+        @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣, c ∈ cep.sets["carrier"][s]], 
+        (t > 1 ? cep.model[:SOC][r,s,y,t-1] : data["cap_init"][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"]) +
+        ("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  ts_data[r,"inflow",t]) 
+        - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t]
+        == cep.model[:SOC][r,s,y,t] 
         )   
-    
     end
     return cep
 end
+
+
+
+"""
+    setup_opt_storage_flows!(cep::OptModelCEP, config::Dict{Any, Any}, data::OptDataCEP)
+
+Adds constraints and cost components to model the energy flows into and out of storage technologies 
+
+Returns the modified `cep` model with added constraints and cost terms.
+"""
+function setup_opt_storage_flows!(cep::OptModelCEP, 
+    config::Dict{Any, Any}, 
+    data::Dict{Any, Any},)
+
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
+
+    # charging
+    @constraint(cep.model, MaxCharging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["charging"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≥ (-1) * (config["dispatch"] ? data["cap_init"][r, "$(replace(g, "in" => "out"))", y] : cep.model[:TotalCapacityAnnual][r, g, y]))
+    @constraint(cep.model, MinCharging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["charging"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r, g, y, c, t] ≤ 0)
+    
+    # discharging tie it to charging capacity to avoid double costs
+    @constraint(cep.model, MaxDischarging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["discharging"], t ∈ 𝓣, c ∈ cep.sets["carrier"][g]], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r, g, y]) * data["eta"][g,y])
+    @constraint(cep.model, MinDischarging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["discharging"], t ∈ 𝓣, c ∈ cep.sets["carrier"][g]], cep.model[:gen][r,g,y,c,t] ≥ 0)
+
+    ## add the costs for charging once
+    setup_opt_costs_fix!(cep, config, data, String[s for s in cep.sets["discharging"]])
+    setup_opt_costs_var!(cep, config, data, String[s for s in cep.sets["discharging"]], 1)
+    setup_opt_costs_var!(cep, config, data, String[s for s in cep.sets["charging"]], -1)
+    #JuMP.fix.(cep.model[:COST][:, :, g ∈ cep.sets["discharging"]], 0; force=true)
+
+    return cep
+end
+
+
+
 
 
 """
