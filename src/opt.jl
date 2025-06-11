@@ -71,20 +71,15 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
         @variable(cep.model, TotalCapacityAnnual[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0) # old and new capacity for generators
         @variable(cep.model, AccumulatedNewCapacity[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0) # accumulated capacity according to lifetime for generators
         @variable(cep.model, NewCapacity[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0)           # new capacity investments for generators      
-        @variable(cep.model, COST[z ∈ ["cap", "fix", "var"], y ∈ 𝓨, g ∈ cep.sets["nodes"]] ≥ 0) 
+        @variable(cep.model, COST[z ∈ ["cap", "fix", "var"], y ∈ 𝓨, g ∈ 𝓖] ≥ 0) 
     else
         @variable(cep.model, COST[z ∈ ["fix", "var"], y ∈ 𝓨, g ∈ 𝓖] ≥ 0) 
     end
 
     # generation variables
     @variable(cep.model, gen[r ∈ 𝓡 , g ∈ setdiff(𝓖, cep.sets["storage_techs"]), y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
-    @variable(cep.model, ll[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ ["electricity", "H2"]] ≥ 0)   # lost load / ENS
-    #@variable(cep.model, ll_h2[r ∈ 𝓡, y ∈ 𝓨] ≥ 0)   # lost load / ENS
 
     @variable(cep.model, em[y ∈ 𝓨] ≥ 0)      # emission CO2 per year ##curtail,emt??
-
-    # cost variables
-    @variable(cep.model, cll[y ∈ 𝓨] ≥ 0)  # costs for lost load yearly
 
     return cep
 end
@@ -106,16 +101,17 @@ function set_up_equations(; cep::OptModelCEP,
     # energy balance equation for each energy carrier
     @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒], 
     sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) 
-    + (c ∈ ["H2", "electricity"] ? cep.model[:ll][r,y,t,c] : 0)
-    - (c == "H2" ? (data["demand"][r,y,"H2"]/8760) : 0)
-    - (c == "electricity" ? (ts_data[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
+    - (c == "H2" ? ((data["demand"][r,y,"H2"]/8760) * ts_data.weight[t]) : 0)
+    - (c == "electricity" ? (ts_data.ts[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
     == 0)
        
     # emission accounting
     @constraint(cep.model, EM[y ∈ 𝓨],cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
 
     # cost for lost load yearly 
-    @constraint(cep.model, CLL[y ∈ 𝓨], cep.model[:cll][y] == config["cll"] * (sum(cep.model[:ll][r,y,t,c] for r ∈ 𝓡, t ∈ 𝓣, c ∈ ["H2", "electricity"])))
+    @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ ["ENS"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ ["ENS"]], cep.model[:COST]["var",y,g] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] for r ∈ 𝓡, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]) * config["cll"] )
+
 
     # limit max and min generation dispatchable and non dispatchable
     @constraint(cep.model, GenCapDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y])   
@@ -401,6 +397,35 @@ end
 
 
 
+"""
+     setup_opt_objective!(cep::OptModelCEP, config::Dict{Any, Any})
+Calculate total system costs and set as objective
+"""
+function setup_opt_objective!(cep::OptModelCEP, 
+    config::Dict{Any, Any})
+    ## OBJECTIVE ##
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
+
+    opex_discounted = sum(
+    1 / ((1 + config["r"])^(y - 𝓨[1])) * (
+        sum(cep.model[:COST]["fix", y, g] for g ∈ 𝓖) +
+        sum(cep.model[:COST]["var", y, g] for g ∈ setdiff(𝓖, cep.sets["storage_techs"])) +
+        sum(cep.model[:COST]["var", y, g] for g ∈ cep.sets["ENS"])
+        #cep.model[:cll][y]
+    ) for y ∈ 𝓨)
+
+    if !config["dispatch"]
+        @objective(cep.model, Min, sum(
+            1 / ((1 + config["r"])^(y - 𝓨[1])) *
+            sum(cep.model[:COST]["cap", y, g] for g ∈ cep.sets["invest_all"])
+            for y ∈ 𝓨 
+        ) + opex_discounted)
+    else
+        @objective(cep.model, Min, opex_discounted)
+    end
+
+  return cep
+end
 
 
 
