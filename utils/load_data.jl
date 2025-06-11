@@ -64,19 +64,22 @@ function load_timeseries_data_full(; config::Dict{Any,Any})
   # Read om the data 
   CountryData = Dict(t => DataFrame(CSV.File(normpath(joinpath(dirname(@__FILE__),"..","data", "$t.csv")), delim=';', decimal=',')) for t ∈ config["timeseries"])
 
-  sc = JuMP.Containers.DenseAxisArray(zeros(length(config["countries"]), length(config["timeseries"]), config["timesteplength"]), config["countries"], config["timeseries"], 1:config["timesteplength"]) 
+  sc = JuMP.Containers.DenseAxisArray(zeros(length(config["countries"]), length(config["timeseries"]), 8760), config["countries"], config["timeseries"], 1:8760) 
 
   # populate the array
   for t ∈ config["timeseries"], r ∈ config["countries"]
-    data_col = CountryData[t][1:config["timesteplength"], r]
-    @info "Timesteplength is $(config["timesteplength"])"
-    if length(data_col) != 8760 && config["timesteplength"] == 8760
-      error("Time series for $r in $t does not have 8.760 entries.")
-    else
-      sc[r,t,:] .= data_col
-    end
+    sc[r,t,1:8760] = CountryData[t][1:8760, r]
   end
-  return sc
+
+  ## average the data if specified
+  if config["average"] > 1
+    @info "Each time-series is averaged in $(config["average"])-hourly steps"
+    sc, weights = average_ts_data(ts_data=sc, config=config)
+  else
+    weights = Dict(d => 1 for d ∈ 1:8760)
+  end
+
+  return ClustData(sc, weights)
 end
 
 
@@ -144,15 +147,24 @@ function create_array_from_df(df::DataFrame, els...; default=0.0)
 end
 
 
-function average_ts_data(; ts_data::JuMP.Containers.DenseAxisArray)
 
-  ts_data_2 = JuMP.Containers.DenseAxisArray(zeros(length(2020:10:2050), length(axes(ts_data)[2]), 1, length(axes(ts_data)[4])), 2020:10:2050, axes(ts_data)[2], 1, axes(ts_data)[4])
+function average_ts_data(; ts_data::JuMP.Containers.DenseAxisArray, config::Dict{Any,Any})
 
-  for y in axes(ts_data)[1] for g in axes(ts_data)[2] for s in axes(ts_data)[3] for t in axes(ts_data)[4]
-    ts_data_2[y,g,1,t] += ts_data[y,g,s,t]
-  end end end end
+  ts_len = Int(ceil(8760/config["average"]))
 
-  return ts_data_2 / length(axes(ts_data)[3])
+  ts_data_2 = JuMP.Containers.DenseAxisArray(zeros(length(config["countries"]), length(config["timeseries"]), ts_len), config["countries"], config["timeseries"], 1:ts_len) 
+
+  for r ∈ config["countries"], ts ∈ config["timeseries"], t ∈ 1:ts_len
+    if t == ts_len
+      ts_data_2[r,ts,t] = mean(ts_data[r,ts,(t-1)*config["average"]+1:end])
+    else
+      ts_data_2[r,ts,t] = mean(ts_data[r,ts,(t-1)*config["average"]+1:t*config["average"]])
+    end
+  end
+
+  weight = Dict(d => 8760/ts_len for d ∈ 1:ts_len)
+
+  return ts_data_2, weight
 end
 
 
