@@ -8,7 +8,7 @@ Required elements are:
 """
 
 
-function run_opt(; ts_data,
+function run_opt(; ts_data::ClustData,
     data::OptDataCEP,
     config::Dict{Any, Any},
     kwargs...
@@ -23,8 +23,8 @@ function run_opt(; ts_data,
     @info "Setting up the optimization equations ..."
     set_up_equations(cep=cep, ts_data=ts_data, data=data, config=config)
     setup_opt_storage!(cep, ts_data, config, data)
-    setup_opt_conversion!(cep, config, data)    
-    set_opt_transmission!(cep, config, data)
+    setup_opt_conversion!(cep, config, ts_data, data)    
+    set_opt_transmission!(cep, config, ts_data, data)
     setup_opt_objective!(cep, config)
 
     return cep
@@ -32,7 +32,7 @@ end
 
 
 
-function setup_opt_basic(;ts_data::JuMP.Containers.DenseAxisArray, 
+function setup_opt_basic(;ts_data::ClustData, 
     config::Dict{Any, Any},
     data::OptDataCEP)
     
@@ -87,7 +87,7 @@ end
 
 
 function set_up_equations(; cep::OptModelCEP, 
-    ts_data::JuMP.Containers.DenseAxisArray, 
+    ts_data::ClustData, 
     data::OptDataCEP, 
     config::Dict{Any, Any}, 
     kwargs...)
@@ -106,7 +106,7 @@ function set_up_equations(; cep::OptModelCEP,
     == 0)
        
     # emission accounting
-    @constraint(cep.model, EM[y ∈ 𝓨],cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
+    @constraint(cep.model, EM[y ∈ 𝓨],cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
 
     # cost for lost load yearly 
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ ["ENS"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
@@ -118,7 +118,7 @@ function set_up_equations(; cep::OptModelCEP,
     @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y] * ts_data[r,g,t])
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ vcat(cep.sets["non_dispatch"],cep.sets["dispatch"]), c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
 
-    setup_opt_costs_var!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
+    setup_opt_costs_var!(cep, config, data, ts_data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
     setup_opt_costs_fix!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]))
 
     if !config["dispatch"]
@@ -126,7 +126,8 @@ function set_up_equations(; cep::OptModelCEP,
         JuMP.fix.(cep.model[:AccumulatedNewCapacity][:, :, 𝓨[1]], 0; force=true)
         JuMP.fix.(cep.model[:NewCapacity][:, :, 𝓨[1]], 0; force=true)
 
-        setup_opt_costs_cap!(cep, config, cep.sets["invest_tech"])
+
+        setup_opt_costs_cap!(cep, config, data, cep.sets["invest_tech"])
 
         # new capacity investments 
         @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + cep.model[:NewCapacity][r,g,y] + data["cap_init"][r,g,y])    
@@ -135,7 +136,7 @@ function set_up_equations(; cep::OptModelCEP,
         # max potential capacity constraint
         for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨[2:end]
             if data["cap"][r, g, y] > 0
-                @constraint(cep.model, MaxCap[r, g, y], cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
+                @constraint(cep.model, cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
             end
         end
         
@@ -152,7 +153,7 @@ end
 
 
 function setup_opt_storage!(cep::OptModelCEP, 
-    ts_data::JuMP.Containers.DenseAxisArray,  
+    ts_data::ClustData,  
     config::Dict{Any, Any}, 
     data::OptDataCEP)
 
@@ -213,6 +214,7 @@ Returns the modified `cep` model with added constraints and cost terms.
 """
 function setup_opt_storage_flows!(cep::OptModelCEP, 
     config::Dict{Any, Any}, 
+    ts_data::ClustData,
     data::Dict{Any, Any},)
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
@@ -227,8 +229,8 @@ function setup_opt_storage_flows!(cep::OptModelCEP,
 
     ## add the costs for charging once
     setup_opt_costs_fix!(cep, config, data, String[s for s in cep.sets["discharging"]])
-    setup_opt_costs_var!(cep, config, data, String[s for s in cep.sets["discharging"]], 1)
-    setup_opt_costs_var!(cep, config, data, String[s for s in cep.sets["charging"]], -1)
+    setup_opt_costs_var!(cep, config, data, ts_data, String[s for s in cep.sets["discharging"]], 1)
+    setup_opt_costs_var!(cep, config, data, ts_data, String[s for s in cep.sets["charging"]], -1)
     #JuMP.fix.(cep.model[:COST][:, :, g ∈ cep.sets["discharging"]], 0; force=true)
 
     return cep
@@ -246,6 +248,7 @@ A conversion technology converts the input carrier to an output carrier with a c
 
 function setup_opt_conversion!(cep::OptModelCEP, 
     config::Dict{Any, Any},
+    ts_data::ClustData,
     data::OptDataCEP)   
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
@@ -275,6 +278,7 @@ end
 
 function set_opt_transmission!(cep::OptModelCEP, 
     config::Dict{Any, Any},
+    ts_data::ClustData,
     data::OptDataCEP)
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
@@ -344,7 +348,8 @@ add capital costs for the technology defined by `tech_group`
 
 function setup_opt_costs_cap!(cep::OptModelCEP, 
     config::Dict{Any, Any}, 
-    tech_group::String)
+    data::Dict{Any, Any},
+    tech_group::Vector{String})
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
@@ -383,14 +388,14 @@ add variable costs for the technology defined by `tech_group`
 function setup_opt_costs_var!(cep::OptModelCEP, 
     config::Dict{Any, Any}, 
     data::Dict{Any, Any},
+    ts_data::ClustData,
     tech_group::Vector{String}, 
     sign_generation::Int64)
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
    
     # variable costs for operation
-
-    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], cep.model[:COST]["var", y,g] == sign_generation * (sum(sum(cep.model[:gen][r,g,y,c,t] for r ∈ 𝓡, t ∈ 𝓣) * data["c_var"][g, y] for c ∈ cep.sets["carrier"][g])))
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], cep.model[:COST]["var",y,g] == sign_generation * (sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] for r ∈ 𝓡, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]) * data["c_var"][g, y]))
 
     return cep
 end
@@ -432,7 +437,7 @@ end
 function optimize_and_output(; cep::OptModelCEP,
     config::Dict{Any, Any}, 
     data::OptDataCEP, 
-    ts_data)
+    ts_data::ClustData)
 
     optimize!(cep.model)
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
@@ -475,9 +480,9 @@ function optimize_and_output(; cep::OptModelCEP,
                 end
             end
 
-            for r ∈ axes(ts_data)[1], t ∈ axes(ts_data)[3] 
+            for r ∈ axes(ts_data.ts)[1], t ∈ axes(ts_data.ts)[3] 
                 str = "Demand[$r,$t,$(config["year"])]"
-                val = ts_data[r,"Demand",t] * data.data["demand"][r,config["year"],"electricity"]
+                val = ts_data.ts[r,"Demand",t] * data.data["demand"][r,config["year"],"electricity"]
                 println(file, "$str = $val")
             end
             

@@ -13,7 +13,7 @@ struct OptResult
  end
 
 struct load_timeseries_data
-  sc::JuMP.Containers.DenseAxisArray
+  ts::JuMP.Containers.DenseAxisArray
   weights::Dict{Any,Any}
  end
 
@@ -31,3 +31,8 @@ struct OptDataCEP
   data::Dict
   lines::Dict{Tuple{String, String}, OptDataCEPLine}
 end
+
+struct ClustData
+  ts::JuMP.Containers.DenseAxisArray
+  weight::Dict{Any,Any}
+ end
