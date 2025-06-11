@@ -68,7 +68,7 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
     if !config["dispatch"]
         @info "Investment mode is on."
         # capacity variables
-        @variable(cep.model, TotalCapacityAnnual[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0) # old and new capacity for generators
+        @variable(cep.model, TotalCapacityAnnual[r ∈ 𝓡 ,g ∈ cep.sets["nodes"], y ∈ 𝓨] ≥ 0) # old and new capacity for generators
         @variable(cep.model, AccumulatedNewCapacity[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0) # accumulated capacity according to lifetime for generators
         @variable(cep.model, NewCapacity[r ∈ 𝓡 ,g ∈ cep.sets["invest_tech"], y ∈ 𝓨] ≥ 0)           # new capacity investments for generators      
         @variable(cep.model, COST[z ∈ ["cap", "fix", "var"], y ∈ 𝓨, g ∈ 𝓖] ≥ 0) 
@@ -115,13 +115,16 @@ function set_up_equations(; cep::OptModelCEP,
 
     # limit max and min generation dispatchable and non dispatchable
     @constraint(cep.model, GenCapDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y])   
-    @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y] * ts_data[r,g,t])
+    @constraint(cep.model, GenCapNonDisp[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["non_dispatch"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≤ (config["dispatch"] ? data["cap_init"][r,g,y] : cep.model[:TotalCapacityAnnual][r,g,y]) * data["eta"][g,y] * ts_data.ts[r,g,t])
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ vcat(cep.sets["non_dispatch"],cep.sets["dispatch"]), c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
 
     setup_opt_costs_var!(cep, config, data, ts_data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]), 1)
     setup_opt_costs_fix!(cep, config, data, vcat(cep.sets["non_dispatch"], cep.sets["dispatch"]))
 
     if !config["dispatch"]
+        # fix generation capacity where no investments are allowed to the base year
+        @constraint(cep.model, NoInvestments[r ∈ 𝓡, y ∈ 𝓨, g ∈ setdiff(cep.sets["nodes"], cep.sets["invest_tech"])], cep.model[:TotalCapacityAnnual][r,g,y] == data["cap_init"][r,g,y])
+
         # no investments in 2020
         JuMP.fix.(cep.model[:AccumulatedNewCapacity][:, :, 𝓨[1]], 0; force=true)
         JuMP.fix.(cep.model[:NewCapacity][:, :, 𝓨[1]], 0; force=true)
@@ -130,9 +133,11 @@ function set_up_equations(; cep::OptModelCEP,
         setup_opt_costs_cap!(cep, config, data, cep.sets["invest_tech"])
 
         # new capacity investments 
-        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + cep.model[:NewCapacity][r,g,y] + data["cap_init"][r,g,y])    
+        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y]  + data["cap_init"][r,g,y])    
         # accumulated capacity
-        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨[2:end]], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,hat_y] for hat_y in 𝓨[1]:10:y if y - 𝓨[1] ≤ data["lifetime"][g]))
+
+        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨[2:end]], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,yy] for yy ∈ 𝓨 if (y - yy < data["lifetime"][g]) && (y-yy >= 0)))
+
         # max potential capacity constraint
         for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨[2:end]
             if data["cap"][r, g, y] > 0
