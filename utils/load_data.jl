@@ -104,14 +104,11 @@ function load_data(;config::Dict{Any,Any})
       select!(df, Not("Unit"))
     end
 
-    config["tech_mapping"] = Dict("Batt" => ["Batt_in", "Batt_out"])
-
-
     # Convert to Jump Density Array
     if n ∈ ["c_CAPEX", "c_var", "c_fix"]
       data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050; default=0.0001)
     elseif n ∈ ["cap"]
-      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=99999)
+      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=99999.0)
     elseif n ∈ ["cap_init"]
       data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=0.0)
     elseif n ∈ ["lifetime", "emission"]
