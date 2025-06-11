@@ -220,7 +220,7 @@ function setup_opt_storage_flows!(cep::OptModelCEP,
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     # charging
-    @constraint(cep.model, MaxCharging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["charging"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≥ (-1) * (config["dispatch"] ? data["cap_init"][r, "$(replace(g, "in" => "out"))", y] : cep.model[:TotalCapacityAnnual][r, g, y]))
+    @constraint(cep.model, MaxCharging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["charging"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r,g,y,c,t] ≥ (-1) * (config["dispatch"] ? data["cap_init"][r, "$(replace(g, "in" => "out"))", y] : cep.model[:TotalCapacityAnnual][r,"$(replace(g, "in" => "out"))", y]))
     @constraint(cep.model, MinCharging[r ∈ 𝓡, y ∈ 𝓨, g ∈ cep.sets["charging"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣], cep.model[:gen][r, g, y, c, t] ≤ 0)
     
     # discharging tie it to charging capacity to avoid double costs
@@ -284,56 +284,35 @@ function set_opt_transmission!(cep::OptModelCEP,
     ## VARIABLE ##
     @variable(cep.model, FLOW[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣] >= 0)
 
-    if !config["dispatch"]
-        @variable(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨]  >= 0)
-        @variable(cep.model, NewTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
-        @variable(cep.model, TotalTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
-    end
 
-    ## TRANSMISSION TRANS ##
-    @constraint(cep.model, FlowLimit[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣], cep.model[:FLOW][g,l,dir,y,t] ≤ (config["dispatch"] ? lines[(g, l)].power_lim : TotalTradeCapacity[g,l,y]))
-
-    if !config["dispatch"]
-        @constraint(cep.model, ExistingTransmCapa[g ∈ cep.sets["transmission"], l ∈ 𝓛], TotalTradeCapacity[g,l,𝓨[1]] == (c == "electricity" ? lines[(g, l)].power_lim : 0))  
-        @constraint(cep.model, TransmissionExpansion[g ∈ cep.sets["transmission"], l ∈ 𝓛, i ∈ eachindex(𝓨)[2:end]], TotalTradeCapacity[g,l,𝓨[i]] == NewTradeCapacity[g,l,𝓨[i]] + TotalTradeCapacity[g,l,𝓨[i-1]])
-        @constraint(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨[2:end]], NewTradeCapacityCosts[g,y] == sum(NewTradeCapacity[g,l,y] * lines[(g, l)].length * config["techs"][g]["investment_costs"] for l ∈ 𝓛))
-        JuMP.fix.(cep.model[:NewTradeCapacity][:, :, 𝓨[1]], 0; force=true)
-        JuMP.fix.(cep.model[:NewTradeCapacityCosts][:, 𝓨[1]], 0; force=true)
-    end
-    
     @constraint(cep.model, Nettrade[r ∈ 𝓡, g ∈ cep.sets["transmission"], y ∈ 𝓨, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]], 
     cep.model[:gen][r,g,y,c,t] 
     == sum(cep.model[:FLOW][g, line_end,"uniform",y,t] - cep.model[:FLOW][g,line_end,"opposite",y,t]/lines[(g,line_end)].eff for line_end ∈ [l for ((t, l), v) ∈ lines if t == g && v.node_end == r]) + 
     sum(cep.model[:FLOW][g,line_start,"opposite",y,t] - cep.model[:FLOW][g,line_start,"uniform",y,t]/lines[(g,line_start)].eff for line_start ∈ [l for ((t,l), v) ∈ lines if t == g && v.node_start == r]))
 
-    setup_opt_costs_var!(cep, config, data, cep.sets["transmission"], 1)
-    
+    setup_opt_costs_var!(cep, config, data, ts_data, cep.sets["transmission"], 1)
+    JuMP.fix.(cep.model[:COST]["fix",:,cep.sets["transmission"]], 0; force=true)
+
+    if !config["dispatch"]
+        @variable(cep.model, NewTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
+        @variable(cep.model, TotalTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
+
+        @constraint(cep.model, ExistingTransmCapa[g ∈ cep.sets["transmission"], l ∈ 𝓛], TotalTradeCapacity[g,l,𝓨[1]] == lines[(g, l)].power_lim)  
+        @constraint(cep.model, TransmissionExpansion[g ∈ cep.sets["transmission"], l ∈ 𝓛, i ∈ eachindex(𝓨)[2:end]], TotalTradeCapacity[g,l,𝓨[i]] == NewTradeCapacity[g,l,𝓨[i]] + TotalTradeCapacity[g,l,𝓨[i-1]])
+        
+        @constraint(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨[2:end]], cep.model[:COST]["cap",y,g] == sum(NewTradeCapacity[g,l,y] * lines[(g, l)].length * config["techs"][g]["investment_costs"] for l ∈ 𝓛))
+        
+        JuMP.fix.(cep.model[:NewTradeCapacity][:, :, 𝓨[1]], 0; force=true)
+        JuMP.fix.(cep.model[:COST]["cap",𝓨[1],cep.sets["transmission"]], 0; force=true)
+    end
+
+    ## TRANSMISSION TRANS ##
+    @constraint(cep.model, FlowLimit[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣], cep.model[:FLOW][g,l,dir,y,t] ≤ (config["dispatch"] ? lines[(g, l)].power_lim : TotalTradeCapacity[g,l,y]))
+        
     return cep
 end
 
 
-"""
-     setup_opt_objective!(cep::OptModelCEP, config::Dict{Any, Any})
-Calculate total system costs and set as objective
-"""
-function setup_opt_objective!(cep::OptModelCEP, 
-    config::Dict{Any, Any})
-    ## OBJECTIVE ##
-    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
-
-    opex = sum(sum(cep.model[:COST]["fix",y,g] for g ∈ 𝓖) + sum(cep.model[:COST]["var",y,g] for g ∈ setdiff(𝓖,cep.sets["storage_techs"])) + cep.model[:cll][y] for y ∈ 𝓨)
-
-
-    if !config["dispatch"]
-        @objective(cep.model, Min, sum(1/((1+config["r"])^(y-𝓨[1]))*
-        (cep.model[:COST]["cap",y,g] for g ∈ cep.sets["nodes"]) 
-        + sum(NewTradeCapacityCosts[g,y] for g ∈ cep.sets["transmission"]) for y ∈ 𝓨)
-        + sum(1/((1+config["r"])^(y-𝓨[1])) * opex))  
-    else            
-        @objective(cep.model, Min, opex)  
-    end
-  return cep
-end
 
 
 
@@ -349,7 +328,7 @@ function setup_opt_costs_cap!(cep::OptModelCEP,
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
-    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], sum(cep.model[:NewCapacity][r,g,y] for r ∈ 𝓡) * data["c_CAPEX"][g,y] == cep.model[:COST]["CAP",y,g]) 
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ tech_group], sum(cep.model[:NewCapacity][r,g,y] for r ∈ 𝓡) * data["c_CAPEX"][g,y] == cep.model[:COST]["cap",y,g]) 
 
     return cep
 end
