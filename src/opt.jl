@@ -179,31 +179,26 @@ function setup_opt_storage!(cep::OptModelCEP,
     # define fixed costs only
     setup_opt_costs_fix!(cep, config, data, 𝓢)
     
-    # define charging and discharging operations
-    setup_opt_storage_flows!(cep, config, data)
+    # define charging and discharging limits
+    setup_opt_storage_flows!(cep, config, ts_data, data)
+
+    # storage filling
+    for r ∈ 𝓡, s ∈ 𝓢, y ∈ 𝓨, c ∈ cep.sets["carrier"][s]
+        soc_start = config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]
+        for t ∈ 𝓣
+            @constraint(cep.model, 
+            (t > 1 ? cep.model[:SOC][r,s,y,t-1] : soc_start * config["techs"][s]["constraints"]["SOC_Start"]) +
+            (("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  ts_data.ts[r,"inflow",t]) 
+            - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t] )
+            == cep.model[:SOC][r,s,y,t],
+            base_name="SoC_Balance$r,$s,$y,$t" 
+            )   
+        end
+    end
     
     if !config["dispatch"]
-            # Connect the previous storage level with the new storage level
-        @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], 
-        (t > 1 ? cep.model[:SOC][r,s,y,t-1] : cep.model[:TotalCapacityAnnual][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"]) +
-        ("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  ts_data[r,"inflow",t]) 
-        - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t]
-        == cep.model[:SOC][r,s,y,t] 
-        )
-        setup_opt_costs_cap!(cep, config, 𝓢)
-
-        @constraint(cep.model, P2E_ratio[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_in",y] * config["techs"][s]["constraints"]["P2E"]  ≤ cep.model[:TotalCapacityAnnual][r,s,y])
-        # charging and discharging investments are the same
-        # TODO avoid double charging costs 
-        @constraint(cep.model, Discharg_Charge[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_in",y] == cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_out",y])
-    
-    else
-        @constraint(cep.model, SoC_Balance[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣, c ∈ cep.sets["carrier"][s]], 
-        (t > 1 ? cep.model[:SOC][r,s,y,t-1] : data["cap_init"][r,s,y] * config["techs"][s]["constraints"]["SOC_Start"]) +
-        ("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  ts_data[r,"inflow",t]) 
-        - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t]
-        == cep.model[:SOC][r,s,y,t] 
-        )   
+        ## define capital costs
+        @constraint(cep.model, P2E_ratio[r ∈ 𝓡, s ∈ intersect(𝓢,cep.sets["invest_tech"]) , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_out",y] * config["techs"][s]["constraints"]["P2E"]  ≤ cep.model[:TotalCapacityAnnual][r,s,y])
     end
     return cep
 end
@@ -268,11 +263,7 @@ function setup_opt_conversion!(cep::OptModelCEP,
 
     # add the costs 
     setup_opt_costs_fix!(cep, config, data, cep.sets["conversion"])
-    setup_opt_costs_var!(cep, config, data, cep.sets["conversion"], -1)
-
-    if !config["dispatch"]
-        setup_opt_costs_cap!(cep, config, cep.sets["conversion"])
-    end
+    setup_opt_costs_var!(cep, config, data, ts_data, cep.sets["conversion"], -1)
 
     return cep
 end 
