@@ -10,7 +10,12 @@ Specifically, the following workflow is defined:
 
 
 ## The Model
-The model can be seen as a simplified version of the energy system model [GENeSYS-MOD](https://github.com/GENeSYS-MOD/GENeSYS_MOD.jl). However, the general structure and modeling is inspired by the power sector model [CapacityExpansion.jl](https://github.com/YoungFaithful/CapacityExpansion.jl). <br/>
+The model can be seen as a simplified version of the energy system model [GENeSYS-MOD](https://github.com/GENeSYS-MOD/GENeSYS_MOD.jl). To better make use of Julia's capabilities, the general structure and modeling are inspired by the power sector model [CapacityExpansion.jl](https://github.com/YoungFaithful/CapacityExpansion.jl). <br/>
+
+The dispatch module, which will be approximated by a data-driven approach, can be described as follows:
+
+![dispatch](https://github.com/user-attachments/assets/9713454e-22a6-4bca-a21a-d20a9119c41c)
+
 
 ## The Data
 The technology data is based on the EU-funded [Man0EUvRE project](https://man0euvre.eu/). The corresonding data and data sources are available on [git](https://github.com/GENeSYS-MOD/GENeSYS_MOD.data/tree/development/man0evure_scenario_refresh). The annual hydrogen demand for each country was obtained from the European Hydrogen Backbone report [1]. The inflow profiles and hydropower storage capacities were taken from the latest [TYNDP report](https://2024.entsos-tyndp-scenarios.eu/download/). The weekly inflow profiles are based on the weather year 2016. The hourly capacity factors for solar PV, offshore and onshore wind are obtained from renewables.ninja [2,3,4], a widely recognized open-access platform that derives its estimates from NASA’s MERRA-2 reanalysis data. Furthermore, we use hourly electricity demand data using the ENTSO-E API [4]. These time-series are based on the weather year 2020. <br/>
