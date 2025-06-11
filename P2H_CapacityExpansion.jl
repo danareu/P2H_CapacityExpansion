@@ -26,10 +26,10 @@ module P2H_CapacityExpansion
     #@reexport using TimeSeriesClustering
 
     const DIR = dirname(@__DIR__)
+    include(joinpath("utils","datastructs.jl"))
     include(joinpath("utils","post_processing.jl"))
     include(joinpath("utils","load_data.jl"))
     include(joinpath("src","set.jl"))
-    include(joinpath("utils","datastructs.jl"))
     include(joinpath("src","opt.jl"))
     include(joinpath("results","plot_result.jl"))
 end
