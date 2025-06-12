@@ -107,7 +107,7 @@ function set_up_equations(; cep::OptModelCEP,
 
     # LOST LOAD ELECTRICITY ONLY
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ ["ENS"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
-    @constraint(cep.model, [y ∈ 𝓨, g ∈ ["ENS"]], cep.model[:COST]["var",y,g] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] for r ∈ 𝓡, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]) * config["cll"] )
+    @constraint(cep.model, [y ∈ 𝓨, g ∈ ["ENS"]], cep.model[:COST]["var",y,g] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] for r ∈ 𝓡, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]) * config["cll"])
 
 
     # limit max and min generation dispatchable and non dispatchable
