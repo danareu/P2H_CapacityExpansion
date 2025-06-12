@@ -100,7 +100,7 @@ function set_up_equations(; cep::OptModelCEP,
 
     # energy balance equation for each energy carrier
     @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒], 
-    sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) 
+    sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) * ts_data.weight[t]  
     - (c == "H2" ? ((data["demand"][r,y,"H2"]/8760) * ts_data.weight[t]) : 0)
     - (c == "electricity" ? (ts_data.ts[r,"Demand",t] * data["demand"][r,y,"electricity"]) : 0)
     == 0)
@@ -174,6 +174,9 @@ function setup_opt_storage!(cep::OptModelCEP,
     @constraint(cep.model, SoC_Beginning[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨], cep.model[:SOC][r,s,y,𝓣[end]] == (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]) * config["techs"][s]["constraints"]["SOC_Start"])
 
     # Soc according to max storage level 
+    ## add a spilling variable 
+    @variable(cep.model, SPIL[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣] ≥ 0)
+
     @constraint(cep.model, SoC[r ∈ 𝓡, s ∈ 𝓢 , y ∈ 𝓨, t ∈ 𝓣], cep.model[:SOC][r,s,y,t] ≤ (config["dispatch"] ? data["cap_init"][r,s,y] : cep.model[:TotalCapacityAnnual][r,s,y]))
 
     # define fixed costs only
@@ -188,8 +191,9 @@ function setup_opt_storage!(cep::OptModelCEP,
         for t ∈ 𝓣
             @constraint(cep.model, 
             (t > 1 ? cep.model[:SOC][r,s,y,t-1] : soc_start * config["techs"][s]["constraints"]["SOC_Start"]) +
-            (("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  ts_data.ts[r,"inflow",t]) 
-            - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t] )
+            (("$(replace(s, "S_" => "D_"))_in" ∈ keys(config["techs"]) ? ((-1)* cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_in",y,c,t] * ts_data.weight[t] * data["eta"]["$(replace(s, "S_" => "D_"))_in",y]) :  (ts_data.ts[r,"inflow",t] * ts_data.weight[t])) 
+            - cep.model[:gen][r,"$(replace(s, "S_" => "D_"))_out",y,c,t] * ts_data.weight[t])
+            - cep.model[:SPIL][r,s,y,t]
             == cep.model[:SOC][r,s,y,t],
             base_name="SoC_Balance$r,$s,$y,$t" 
             )   
@@ -390,7 +394,8 @@ function setup_opt_objective!(cep::OptModelCEP,
     1 / ((1 + config["r"])^(y - 𝓨[1])) * (
         sum(cep.model[:COST]["fix", y, g] for g ∈ 𝓖) +
         sum(cep.model[:COST]["var", y, g] for g ∈ setdiff(𝓖, cep.sets["storage_techs"])) +
-        sum(cep.model[:COST]["var", y, g] for g ∈ cep.sets["ENS"])
+        sum(cep.model[:COST]["var", y, g] for g ∈ cep.sets["ENS"]) + 
+        sum(cep.model[:SPIL][r,s,y,t] for r ∈ 𝓡, s ∈ 𝓢, t ∈ 𝓣) * config["cll"]
         #cep.model[:cll][y]
     ) for y ∈ 𝓨)
 
