@@ -1,4 +1,4 @@
-data_path: "/cluster/home/danare/git/P2H_CapacityExpansion/data/data16.xlsx"
+data_path: "/cluster/home/danare/git/P2H_CapacityExpansion/data/data24.xlsx"
 
 
 # cost for lost load
@@ -8,27 +8,24 @@ tdelta: 10
 # interest rate
 r: 0.04
 # regions to be considered
+
 countries:
   - DE
-  - FR
-  - UK
-  - BE
-  - NL
-  - DK
-  - SE
   - NO
+
 
 Load:
   - Demand
 
 year: 2020
 
-timesteplength: 8760
 
 SCTOLERANCE: 10.0e-6
 
+average: 6
 
-dispatch: true
+
+dispatch: false
 
 
 timeseries:
@@ -77,20 +74,20 @@ techs:
       carrier: H2
 
   P_Nuclear:
-    inv: true
+    inv: false
     tech_group: dispatchable_generation
     color: rgb(112,112,112)
     input:
-      fuel: nuclear
+      fuel: R_Nuclear
     output:
       carrier: electricity
 
   P_Coal_Hardcoal:
-    inv: true
+    inv: false
     tech_group: dispatchable_generation
     color: "#424242"
     input:
-      fuel: coal
+      fuel: R_Coal_Hardcoal
     output:
       carrier: electricity
 
@@ -99,7 +96,7 @@ techs:
     tech_group: dispatchable_generation
     color: "#CFD8DC"
     input:
-      fuel: gas
+      fuel: R_Gas
     output:
       carrier: electricity
 
@@ -108,7 +105,7 @@ techs:
     tech_group: dispatchable_generation
     color: "#4CAF50"
     input:
-      fuel: biomass
+      fuel: RES_Residues
     output:
       carrier: electricity
 
@@ -257,5 +254,14 @@ techs:
     tech_group: store_discharging
     input:
       carrier: electricity
+    output:
+      carrier: electricity
+
+
+  ENS:
+    inv: false
+    tech_group: ENS
+    input:
+      carrier: H2
     output:
       carrier: electricity
