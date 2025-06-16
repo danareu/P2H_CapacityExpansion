@@ -120,15 +120,14 @@ function set_up_equations(; cep::OptModelCEP,
 
     # EMISSION ACCOUNTING AND BUDGETS
     @constraint(cep.model, EM[y ∈ 𝓨], cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
-    @constraint(cep.model, EmissionBudget[y ∈ 𝓨[2:end]], cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
 
     if !config["dispatch"]
         # fix generation capacity where no investments are allowed to the base year
         @constraint(cep.model, NoInvestments[r ∈ 𝓡, y ∈ 𝓨, g ∈ setdiff(cep.sets["nodes"], cep.sets["invest_tech"])], cep.model[:TotalCapacityAnnual][r,g,y] == data["cap_init"][r,g,y])
 
         # no investments in 2020
-        JuMP.fix.(cep.model[:AccumulatedNewCapacity][:, :, 𝓨[1]], 0; force=true)
-        JuMP.fix.(cep.model[:NewCapacity][:, :, 𝓨[1]], 0; force=true)
+        #JuMP.fix.(cep.model[:AccumulatedNewCapacity][:, :, 𝓨[1]], 0; force=true)
+        #JuMP.fix.(cep.model[:NewCapacity][:, :, 𝓨[1]], 0; force=true)
 
 
         setup_opt_costs_cap!(cep, config, data, cep.sets["invest_tech"])
@@ -136,11 +135,11 @@ function set_up_equations(; cep::OptModelCEP,
         # new capacity investments 
         @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y]  + data["cap_init"][r,g,y])    
         # accumulated capacity
-
-        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨[2:end]], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,yy] for yy ∈ 𝓨 if (y - yy < data["lifetime"][g]) && (y-yy >= 0)))
+        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,yy] for yy ∈ 𝓨 if (y - yy < data["lifetime"][g]) && (y-yy >= 0)))
+        @constraint(cep.model, EmissionBudget[y ∈ 𝓨], cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
 
         # max potential capacity constraint
-        for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨[2:end]
+        for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨
             if data["cap"][r, g, y] > 0
                 @constraint(cep.model, cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
             end
@@ -294,12 +293,12 @@ function set_opt_transmission!(cep::OptModelCEP,
         @variable(cep.model, TotalTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
 
         @constraint(cep.model, ExistingTransmCapa[g ∈ cep.sets["transmission"], l ∈ 𝓛], TotalTradeCapacity[g,l,𝓨[1]] == lines[(g, l)].power_lim)  
-        @constraint(cep.model, TransmissionExpansion[g ∈ cep.sets["transmission"], l ∈ 𝓛, i ∈ eachindex(𝓨)[2:end]], TotalTradeCapacity[g,l,𝓨[i]] == NewTradeCapacity[g,l,𝓨[i]] + TotalTradeCapacity[g,l,𝓨[i-1]])
+        @constraint(cep.model, TransmissionExpansion[g ∈ cep.sets["transmission"], l ∈ 𝓛, i ∈ eachindex(𝓨)], TotalTradeCapacity[g,l,𝓨[i]] == NewTradeCapacity[g,l,𝓨[i]] + TotalTradeCapacity[g,l,𝓨[i-1]])
         
-        @constraint(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨[2:end]], cep.model[:COST]["cap",y,g] == sum(NewTradeCapacity[g,l,y] * lines[(g, l)].length * config["techs"][g]["investment_costs"] for l ∈ 𝓛))
+        @constraint(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨], cep.model[:COST]["cap",y,g] == sum(NewTradeCapacity[g,l,y] * lines[(g, l)].length * config["techs"][g]["investment_costs"] for l ∈ 𝓛))
         
-        JuMP.fix.(cep.model[:NewTradeCapacity][:, :, 𝓨[1]], 0; force=true)
-        JuMP.fix.(cep.model[:COST]["cap",𝓨[1],cep.sets["transmission"]], 0; force=true)
+        #JuMP.fix.(cep.model[:NewTradeCapacity][:, :, 𝓨[1]], 0; force=true)
+        #JuMP.fix.(cep.model[:COST]["cap",𝓨[1],cep.sets["transmission"]], 0; force=true)
     end
 
     ## TRANSMISSION TRANS ##
@@ -383,7 +382,7 @@ function setup_opt_objective!(cep::OptModelCEP,
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     opex_discounted = sum(
-    1 / ((1 + config["r"])^(y - 𝓨[1])) * (
+    1 / ((1 + config["r"])^(y - 𝓨[1] - 10)) * (
         sum(cep.model[:COST]["fix", y, g] for g ∈ 𝓖) +
         sum(cep.model[:COST]["var", y, g] for g ∈ setdiff(𝓖, cep.sets["storage_techs"])) +
         sum(cep.model[:COST]["var", y, g] for g ∈ cep.sets["ENS"]) + 
@@ -393,7 +392,7 @@ function setup_opt_objective!(cep::OptModelCEP,
 
     if !config["dispatch"]
         @objective(cep.model, Min, sum(
-            1 / ((1 + config["r"])^(y - 𝓨[1])) *
+            1 / ((1 + config["r"])^(y - 𝓨[1] - 10)) *
             sum(cep.model[:COST]["cap", y, g] for g ∈ cep.sets["invest_all"])
             for y ∈ 𝓨 
         ) + opex_discounted)

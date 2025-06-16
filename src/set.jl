@@ -4,7 +4,7 @@ function setup_opt_set!(sets::Dict{Any, Any},
     data)
 
     sets["techs"] = keys(config["techs"])      
-    sets["years"] = config["dispatch"] ? config["year"] : 2020:10:2050
+    sets["years"] = config["year"]
     sets["ENS"] = [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "") == "ENS"]  
     sets["timesteps"] = axes(ts_data.ts)[3]
     sets["regions"] = config["countries"]

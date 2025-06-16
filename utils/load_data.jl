@@ -106,19 +106,19 @@ function load_data(;config::Dict{Any,Any})
 
     # Convert to Jump Density Array
     if n ∈ ["c_CAPEX", "c_var", "c_fix"]
-      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050; default=0.0001)
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]), config["year"]; default=0.0001)
     elseif n ∈ ["cap"]
-      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=99999.0)
+      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), config["year"]; default=99999.0)
     elseif n ∈ ["cap_init"]
-      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), 2020:10:2050; default=0.0)
+      data_dict[n] = create_array_from_df(df, config["countries"], keys(config["techs"]), config["year"]; default=0.0)
     elseif n ∈ ["lifetime", "emission"]
       data_dict[n] = create_array_from_df(df, keys(config["techs"]); default=0.0)
     elseif n ∈ ["demand"]
-      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050, ["H2", "electricity"]; default=0.0)
+      data_dict[n] = create_array_from_df(df, config["countries"], config["year"], ["H2", "electricity"]; default=0.0)
     elseif n ∈ ["eta"]
-      data_dict[n] = create_array_from_df(df, keys(config["techs"]), 2020:10:2050; default=1.0)
+      data_dict[n] = create_array_from_df(df, keys(config["techs"]), config["year"]; default=1.0)
     else #emission budget
-      data_dict[n] = create_array_from_df(df, config["countries"], 2020:10:2050)
+      data_dict[n] = create_array_from_df(df, config["countries"], config["year"])
     end
   end
   return data_dict
