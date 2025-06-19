@@ -95,6 +95,11 @@ function set_up_equations(; cep::OptModelCEP,
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     data = data.data
 
+    @constraint(cep.model,
+    EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒],
+    sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) * ts_data.weight[t]  
+    == data.data["demand"][r,y,c] * (c == "H2" ? (1/8760) : ts_data.ts[r,"Demand",t]) * ts_data.weight[t]) 
+
     ## how to handle different fuels
     emitting_fuels = [g for g ∈ 𝓖 if data["emission"][g] > 0]
 
@@ -117,16 +122,10 @@ function set_up_equations(; cep::OptModelCEP,
     if !config["dispatch"]
         # fix generation capacity where no investments are allowed to the base year
         @constraint(cep.model, NoInvestments[r ∈ 𝓡, y ∈ 𝓨, g ∈ setdiff(cep.sets["nodes"], cep.sets["invest_tech"])], cep.model[:TotalCapacityAnnual][r,g,y] == data["cap_init"][r,g,y])
-
-        # no investments in 2020
-        #JuMP.fix.(cep.model[:AccumulatedNewCapacity][:, :, 𝓨[1]], 0; force=true)
-        #JuMP.fix.(cep.model[:NewCapacity][:, :, 𝓨[1]], 0; force=true)
-
-
         setup_opt_costs_cap!(cep, config, data, cep.sets["invest_tech"])
 
         # new capacity investments 
-        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y]  + data["cap_init"][r,g,y])    
+        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + data["cap_init"][r,g,y])    
         # accumulated capacity
         @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,yy] for yy ∈ 𝓨 if (y - yy < data["lifetime"][g]) && (y-yy >= 0)))
         @constraint(cep.model, EmissionBudget[y ∈ 𝓨], cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
@@ -401,7 +400,9 @@ end
 function optimize_and_output(; cep::OptModelCEP,
     config::Dict{Any, Any}, 
     data::OptDataCEP, 
-    ts_data::ClustData)
+    ts_data::ClustData,
+    name::String,
+    short_sol::Bool)
 
     optimize!(cep.model)
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
@@ -431,38 +432,55 @@ function optimize_and_output(; cep::OptModelCEP,
         # generation 
         #variables["gen"] = convert_jump_container_to_df(cep=cep, config=config)
 
-        #plotgen(cep, config, 2030, data, ts_data)
 
-        open(joinpath(pwd(),"P2H_CapacityExpansion","results", "solution_full.txt"), "w") do file
+        open(joinpath(pwd(),"P2H_CapacityExpansion","results", "$name.txt"), "w") do file
             println(file, "Objective = $objective")
-            for v ∈ all_variables(cep.model)
-                if value.(v) != 0
-                    val = value.(v)
-                    str = string(v)
-                    variables[str] = val
+
+            if short_sol
+                for r ∈ 𝓡, g ∈ cep.sets["nodes"], y ∈ 𝓨
+                    val = value.(cep.model[:TotalCapacityAnnual][r,g,y])
+                    str = "TotalCapacityAnnual[$r,$g,$y]"
                     println(file, "$str = $val")
                 end
-            end
 
-            for r ∈ axes(ts_data.ts)[1], t ∈ axes(ts_data.ts)[3] 
-                str = "Demand[$r,$t,$(config["year"])]"
-                val = ts_data.ts[r,"Demand",t] * data.data["demand"][r,config["year"],"electricity"]
-                println(file, "$str = $val")
-            end
-            
-            for r ∈ axes(data.data["cap_init"])[1], g ∈ axes(data.data["cap_init"])[2], y ∈ axes(data.data["cap_init"])[3] 
-                val = data.data["cap_init"][r,g,y]
-                println(file, "Capacity$r$g$y = $val") 
-            end
+                for y ∈ 𝓨
+                    tmp = 0
+                    for g ∈ 𝓖
+                        tmp += value.(cep.model[:COST]["var",y,g])
+                    end
+                    str = "COSTvar$y"
+                    println(file, "$str = $tmp")
+                end
 
-            ## write the dual variables aka shadow prices 
-            for r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒
-                val = dual(cep.model[:EnergyBalance][r, y, t, c])
-                println(file, "Price[$r,$y,$t,$c] = $val")
-            end
 
-            println(file, "TimeSeriesWeight = $(ts_data.weight)") 
-            
+            else
+                for v ∈ all_variables(cep.model)
+                    if value.(v) != 0
+                        val = value.(v)
+                        str = string(v)
+                        variables[str] = val
+                        println(file, "$str = $val")
+                    end
+                end
+
+                for r ∈ axes(ts_data.ts)[1], t ∈ axes(ts_data.ts)[3] 
+                    str = "Demand[$r,$t,$(config["year"])]"
+                    val = ts_data.ts[r,"Demand",t] * data.data["demand"][r,config["year"],"electricity"]
+                    println(file, "$str = $val")
+                end
+                
+                for r ∈ axes(data.data["cap_init"])[1], g ∈ axes(data.data["cap_init"])[2], y ∈ axes(data.data["cap_init"])[3] 
+                    val = data.data["cap_init"][r,g,y]
+                    println(file, "Capacity$r$g$y = $val") 
+                end
+
+                ## write the dual variables aka shadow prices 
+                for r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒
+                    val = dual(cep.model[:EnergyBalance][r, y, t, c])
+                    println(file, "Price[$r,$y,$t,$c] = $val")
+                end
+                println(file, "TimeSeriesWeight = $(ts_data.weight)") 
+            end    
 
         end
         return OptResult(cep.model, status, objective, variables)
