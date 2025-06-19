@@ -98,13 +98,6 @@ function set_up_equations(; cep::OptModelCEP,
     ## how to handle different fuels
     emitting_fuels = [g for g ∈ 𝓖 if data["emission"][g] > 0]
 
-    # energy balance equation for each energy carrier
-    @constraint(cep.model, EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒], 
-    sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) * ts_data.weight[t]  
-    - (c == "H2" ? ((data["demand"][r,y,"H2"]/8760) * ts_data.weight[t]) : 0)
-    - (c == "electricity" ? (ts_data.ts[r,"Demand",t] * ts_data.weight[t] * data["demand"][r,y,"electricity"]) : 0)
-    == 0) 
-
     # LOST LOAD ELECTRICITY ONLY
     @constraint(cep.model, [r ∈ 𝓡, y ∈ 𝓨, g ∈ ["ENS"], c ∈ cep.sets["carrier"][g], t ∈ 𝓣],  0 ≤ cep.model[:gen][r,g,y,c,t])
     @constraint(cep.model, [y ∈ 𝓨, g ∈ ["ENS"]], cep.model[:COST]["var",y,g] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] for r ∈ 𝓡, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]) * config["cll"])
