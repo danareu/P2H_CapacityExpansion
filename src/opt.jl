@@ -38,7 +38,7 @@ function setup_opt_basic(;ts_data::ClustData,
     
     # Initialize model
     model =  JuMP.Model()
-    set_optimizer(model, CPLEX.Optimizer)
+    set_optimizer(model, Gurobi.Optimizer)
     # Initialize solver
     optimizer = optimizer_with_attributes(
         () -> Gurobi.Optimizer(Gurobi.Env()),
