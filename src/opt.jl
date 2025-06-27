@@ -98,7 +98,7 @@ function set_up_equations(; cep::OptModelCEP,
     @constraint(cep.model,
     EnergyBalance[r ∈ 𝓡, y ∈ 𝓨, t ∈ 𝓣, c ∈ 𝓒],
     sum(cep.model[:gen][r,g,y,c,t] for g ∈ setdiff(cep.sets[c], cep.sets["storage_techs"])) * ts_data.weight[t]  
-    == data.data["demand"][r,y,c] * (c == "H2" ? (1/8760) : ts_data.ts[r,"Demand",t]) * ts_data.weight[t]) 
+    == data["demand"][r,y,c] * (c == "H2" ? (1/8760) : ts_data.ts[r,"Demand",t]) * ts_data.weight[t]) 
 
     ## how to handle different fuels
     emitting_fuels = [g for g ∈ 𝓖 if data["emission"][g] > 0]
