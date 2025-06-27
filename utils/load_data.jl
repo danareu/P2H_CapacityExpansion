@@ -204,3 +204,27 @@ function load_cep_data_lines(; config::Dict{Any,Any})
   return lines
 end
 
+
+
+clean_float(x) = (ismissing(x) || (x isa Number && isnan(x))) ? 0.0 :
+         parse(Float64, replace(strip(string(x)), '\0' => ""))
+
+
+
+
+function read_txt_file(path)
+    df = CSV.read(path, DataFrame)
+
+    # Strip whitespace from column names
+    rename!(df, Dict(c => strip(c) for c in names(df)))
+
+    # Apply clean_float to all cells
+    for col in names(df)
+        df[!, col] = clean_float.(df[!, col])
+    end
+
+    # Round everything to nearest integer
+    df .= round.(df)
+
+    return df
+end

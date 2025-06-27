@@ -194,3 +194,35 @@ function convert_jump_container_to_df(; cep, config::Dict{Any, Any})
     return gen
 
 end
+
+
+"""
+    scaling(x)
+
+Apply z-normalization (standardization) to the input data.
+
+# Arguments
+- `x::AbstractArray`: Input data matrix (typically samples × features).
+
+# Returns
+- `x_norm`: Normalized data where each feature has zero mean and unit variance.
+- `μ`: Mean of each feature (used for inverse transformation).
+- `σ`: Standard deviation of each feature.
+"""
+function scaling(x)
+    
+    X_centered = x #- mean(x, dims=1)
+
+    μ = mean(X_centered, dims=1)
+    σ = std(X_centered, dims=1)
+    x_norm = (X_centered .- μ) ./ σ
+    
+    ## remove np.nan 
+    for i in eachindex(x_norm)
+        if isnan(x_norm[i])
+            x_norm[i] = 0.0
+        end
+    end
+    return x_norm, μ, σ
+end
+

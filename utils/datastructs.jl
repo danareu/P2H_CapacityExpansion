@@ -36,3 +36,8 @@ struct ClustData
   ts::JuMP.Containers.DenseAxisArray
   weight::Dict{Any,Any}
  end
+
+ struct Surrogate
+    model
+    prediction::Vector{Float64}
+ end
