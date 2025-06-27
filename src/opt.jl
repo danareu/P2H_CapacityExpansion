@@ -431,29 +431,31 @@ function optimize_and_output(; cep::OptModelCEP,
         variables = Dict()
         # generation 
         #variables["gen"] = convert_jump_container_to_df(cep=cep, config=config)
-
-
-        open(joinpath(pwd(),"P2H_CapacityExpansion","results", "$name.txt"), "w") do file
-            println(file, "Objective = $objective")
+   
 
             if short_sol
-                for r ∈ 𝓡, g ∈ cep.sets["nodes"], y ∈ 𝓨
-                    val = value.(cep.model[:TotalCapacityAnnual][r,g,y])
-                    str = "TotalCapacityAnnual[$r,$g,$y]"
-                    println(file, "$str = $val")
-                end
+                #open(joinpath(pwd(),"P2H_CapacityExpansion","results", "$name.txt"), "w") do file
+                    #println(file, "Objective = $objective")
+                # for r ∈ 𝓡, g ∈ cep.sets["nodes"], y ∈ 𝓨
+                #     val = value.(cep.model[:TotalCapacityAnnual][r,g,y])
+                #     str = "TotalCapacityAnnual[$r,$g,$y]"
+                #     println(file, "$str = $val")
+                # end
 
-                for y ∈ 𝓨
-                    tmp = 0
-                    for g ∈ 𝓖
-                        tmp += value.(cep.model[:COST]["var",y,g])
-                    end
-                    str = "COSTvar$y"
-                    println(file, "$str = $tmp")
-                end
+                # for y ∈ 𝓨
+                #     tmp = 0
+                #     for g ∈ 𝓖
+                #         tmp += value.(cep.model[:COST]["var",y,g])
+                #     end
+                #     str = "COSTvar$y"
+                #     println(file, "$str = $tmp")
+                # end
+                @info "Feasible"
 
 
             else
+                open(joinpath(pwd(),"P2H_CapacityExpansion","results", "$name.txt"), "w") do file
+                    println(file, "Objective = $objective")
                 for v ∈ all_variables(cep.model)
                     if value.(v) != 0
                         val = value.(v)
