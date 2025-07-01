@@ -211,7 +211,7 @@ Apply z-normalization (standardization) to the input data.
 """
 function scaling(x)
     
-    X_centered = x - mean(x, dims=1)
+    X_centered = x #.- mean(x, dims=1)
 
     μ = mean(X_centered, dims=1)
     σ = std(X_centered, dims=1)
