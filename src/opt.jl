@@ -520,7 +520,7 @@ function optimize_and_output(; cep::OptModelCEP,
 
     status=Symbol(termination_status(cep.model))
     println(status)
-    if termination_status(cep.model) == MOI.INFEASIBLE_OR_UNBOUNDED || termination_status(cep.model) == MOI.INFEASIBLE
+    if termination_status(cep.model) == MOI.INFEASIBLE_OR_UNBOUNDED || termination_status(cep.model) == MOI.INFEASIBLE || termination_status(cep.model) == MOI.LOCALLY_INFEASIBLE
         JuMP.compute_conflict!(cep.model)
         list_of_conflicting_constraints = ConstraintRef[]
         for (F, S) ∈ list_of_constraint_types(cep.model)
