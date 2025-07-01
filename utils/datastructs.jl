@@ -39,5 +39,5 @@ struct ClustData
 
  struct Surrogate
     model
-    prediction::Vector{Float64}
+    prediction
  end
