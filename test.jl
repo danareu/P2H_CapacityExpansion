@@ -6,56 +6,101 @@ cd("/cluster/home/danare/git")
 Pkg.activate(".")
 using .P2H_CapacityExpansion
 using CPLEX
+using Parameters
 using JuMP
 using XLSX
 using PlotlyJS
+using Surrogates
 using Gurobi
 using Dates
 ENV["CPLEX_STUDIO_BINARIES"] = "/cluster/home/danare/opt/ibm/ILOG/CPLEX_Studio2211/cplex/bin/x86-64_linux/"
 Pkg.add("CPLEX")
 
 
+
+##########################################################################################################
+################################################ Sampling ################################################
+##########################################################################################################
+
+
+
+
 # read in the data
 config = P2H_CapacityExpansion.read_yaml_file();
 data = P2H_CapacityExpansion.load_cep_data(config=config);
 ts_data = P2H_CapacityExpansion.load_timeseries_data_full(config=config);
+gas_gen = [gen for (gen, props) ∈ config["techs"] if haskey(props, "input") && get(props["input"], "fuel", nothing) == "R_Gas"]
 
 
-#### sensitivities TODO remove that later 
-for r in config["countries"], y in 2020:10:2050
-  data.data["demand"][r, y, "electricity"] = data.data["demand"][r,y, "electricity"] *  0.7
+# UNCERTAINTY SET WITH LHS 
+h2_demand = [0.75, 1, 1.25]
+capex = [[420,260,100], [520,360,200], [620,460,300]]
+gas_price = [0.015, 0.04, 0.060]
+capture_rate = [0.56, 0.745, 0.93]
+lifetime = [13, 16, 20]
+## not considered so far
+grid_expansion = [1.5, 1.375, 1.25]
+
+
+## lower and upper bounds
+lb = [0.75, 420, 260, 100, 0.015, 0.56, 13]
+ub = [1.25, 620, 460, 300, 0.06, 0.93, 20]
+
+
+# Number of samples
+n_samples = [1]
+
+
+for n in n_samples
+  # Latin Hypercube Sampling
+  scenarios = Surrogates.sample(n,lb,ub, Surrogates.LatinHypercubeSample())
+
+  k_inv = setdiff([key for (key, val) ∈ config["techs"] if get(val, "inv", "")  == true], [key for (key, val) ∈ config["techs"] if get(val, "tech_group", "")  == "transmission"] ) 
+  push!(k_inv, "Cost")
+  result = "/cluster/home/danare/git/P2H_CapacityExpansion/results/$(n)_scenarios_v3.txt"
+
+  ### HYDROGEN DEMAND ###
+  open(result, "a") do io
+    println(io, join(k_inv, ", "))
+    for (j, s) in enumerate(scenarios)
+      @info "$j scenario ..."
+      
+      # check if already there
+      k = 1
+      for (i, y) ∈ enumerate(config["year"])
+        data.data["demand"][:, y, "H2"] *= s[1]
+        data.data["c_CAPEX"]["X_Electrolysis", y] = s[1+k]
+        k += 1
+      end
+
+      ### GAS PRICE ###
+      for g ∈ gas_gen
+        data.data["c_var"][g, :] = data.data["c_var"][g, :] .+ s[5]
+      end
+        
+      ### CAPTURE RATE ###
+      data.data["emission"]["X_ATR_CCS"] = data.data["emission"]["X_ATR_CCS"] * (1 - s[6])
+
+      ### LIFE TIME ###
+      data.data["lifetime"]["X_Electrolysis"] = s[7]
+
+      cep = P2H_CapacityExpansion.run_opt(ts_data=ts_data, data=data, config=config)
+
+      result = P2H_CapacityExpansion.optimize_and_output(cep=cep, config=config, data=data, ts_data=ts_data, name="$(j)_scenario", short_sol=true)
+      for y ∈ config["year"]
+        tmp_c = 0
+        tmp_list = []
+        for g ∈ cep.sets["invest_tech"]
+          tmp_c += value.(cep.model[:COST]["var",y,g])
+          tmp_capa = 0
+          for r ∈ config["countries"]
+            tmp_capa += value.(cep.model[:TotalCapacityAnnual][r,g,y])
+          end
+          push!(tmp_list, tmp_capa)
+        end
+        push!(tmp_list, tmp_c)
+        println(io, join(tmp_list, ", "))
+      end
+    end
+  end
 end
-
-
-
-
-
-if config["dispatch"]
-  data.data["demand"][:, config["year"], "electricity"] = data.data["demand"][:, config["year"], "electricity"] *  0.5
-  data.data["demand"]["DE", config["year"], "H2"] = 1
-  data.data["cap_init"]["DE", "D_Battery_Li-Ion_in", config["year"]] = 2 
-  data.data["cap_init"]["DE", "X_Electrolysis", config["year"]] = 20 
-  data.data["cap_init"]["DE", "D_Battery_Li-Ion_out", config["year"]] = 2 
-  data.data["cap_init"]["DE", "S_Battery_Li-Ion", config["year"]] = 6 
-
-  data.data["cap_init"]["DE", "D_Gas_H2_in", config["year"]] = 3 
-  data.data["cap_init"]["DE", "P_H2_OCGT", config["year"]] = 15 
-  data.data["cap_init"]["DE", "D_Gas_H2_out", config["year"]] = 3 
-  data.data["cap_init"]["DE", "S_Gas_H2", config["year"]] = 168*3 
-end
-
-# for t in ["S_Gas_H2", "D_Gas_H2_in", "D_Gas_H2_out", "P_H2_OCGT"]
-#     for v in ["c_CAPEX", "c_var", "c_fix"]
-#       println(v, data.data[v][t,2020])
-#     end
-#     println("cap", data.data["cap"]["DE", t, 2020])
-#     println("cap_init", data.data["cap_init"]["DE",t,2020])
-#     println("eta", data.data["eta"][t,2020])
-#     println("lifetime",data.data["lifetime"][t])
-# end 
-  
-
-# run the optimization model
-model = P2H_CapacityExpansion.run_opt(ts_data=ts_data, data=data, config=config);
-
-result = P2H_CapacityExpansion.optimize_and_output(cep=model, config=config, data=data, ts_data=ts_data)
