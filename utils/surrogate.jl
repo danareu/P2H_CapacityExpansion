@@ -252,7 +252,7 @@ example taken from: https://apxml.com/courses/julia-for-machine-learning/chapter
 function neural_network_model_flux(X_train, y_train, X_test, y_test, σy, μy; hidden_layer=500, epochs=1000)
 
     x = permutedims(X_train)                    # shape: features × samples
-    y = reshape(y_train, size(y_train, 2), :)                  # shape: 1 × samples
+    y = permutedims(y_train)                  # shape: 1 × samples
 
     m = Flux.Chain(
         Flux.Dense(size(X_train, 2), hidden_layer, relu),
@@ -288,9 +288,8 @@ function neural_network_model_flux(X_train, y_train, X_test, y_test, σy, μy; h
     end 
     
     ŷ = m(permutedims(X_test))
-    ŷ_rescaled = permutedims(ŷ) .* σy .+ μy
 
-    return Surrogate(m, ŷ_rescaled)
+    return Surrogate(m, permutedims(ŷ))
 end
 
 
