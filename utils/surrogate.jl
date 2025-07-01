@@ -249,14 +249,14 @@ example taken from: https://apxml.com/courses/julia-for-machine-learning/chapter
 """
 
 
-function neural_network_model_flux(X_train, y_train, X_test, y_test; hidden_layer=1000, epochs=1000)
+function neural_network_model_flux(X_train, y_train, X_test, y_test, σy, μy; hidden_layer=500, epochs=1000)
 
     x = permutedims(X_train)                    # shape: features × samples
-    y = reshape(y_train, 1, :)                  # shape: 1 × samples
+    y = reshape(y_train, size(y_train, 2), :)                  # shape: 1 × samples
 
-    m = Chain(
-    Dense(size(X_train, 2), hidden_layer, relu),
-    Dense(hidden_layer, 1)
+    m = Flux.Chain(
+        Flux.Dense(size(X_train, 2), hidden_layer, relu),
+        Flux.Dense(hidden_layer, size(y_train, 2))
 )
 
     # track parameters
@@ -264,10 +264,6 @@ function neural_network_model_flux(X_train, y_train, X_test, y_test; hidden_laye
     # select an optimizer
     α = 0.001 
     opt = ADAM(α)
-
-    # train the model
-    losses = []
-    r2_list =  []
 
     loss(x, y) = Flux.Losses.mae(m(x), y)
     loss_fn(m, x, y) = Flux.mae(m(x), y) 
@@ -286,13 +282,15 @@ function neural_network_model_flux(X_train, y_train, X_test, y_test; hidden_laye
 
         # print report
         ŷ = m(permutedims(X_test))
-        r2 = P2H_CapacityExpansion.r2_score(y_test, permutedims(ŷ))
+        ŷ_rescaled = permutedims(ŷ) .* σy .+ μy
+        r2 = P2H_CapacityExpansion.r2_score(y_test, ŷ_rescaled)
         println("Epoch = $epoch : Training loss = $(loss(x, y)), R2 score : $(r2)")
-        push!(r2_list, r2)
-        push!(losses, loss(x, y))
     end 
+    
+    ŷ = m(permutedims(X_test))
+    ŷ_rescaled = permutedims(ŷ) .* σy .+ μy
 
-    return Surrogate(m, ŷ)
+    return Surrogate(m, ŷ_rescaled)
 end
 
 
