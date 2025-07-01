@@ -26,6 +26,9 @@ module P2H_CapacityExpansion
     using Clustering
     using Distances
     using AxisKeys
+    using Flux
+    using Ipopt
+    using MathOptAI
     using GaussianProcesses: RQ, GPE, MeanZero
 
     using DecisionTree
