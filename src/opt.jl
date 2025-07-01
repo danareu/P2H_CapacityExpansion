@@ -11,21 +11,25 @@ Required elements are:
 function run_opt(; ts_data::ClustData,
     data::OptDataCEP,
     config::Dict{Any, Any},
+    surrogate::Bool,
+    solver::DataType, 
     kwargs...
     )
 
     @info "Reading the data ..."
-    cep=setup_opt_basic(ts_data=ts_data, config=config, data=data)
+    cep=setup_opt_basic(ts_data=ts_data, config=config, solver=solver, data=data)
 
-    @info "Setting up the optimization variables ..."
-    setup_opt_basic_variables(cep=cep, config=config) 
+    setup_opt_inv_variables!(cep, config) 
+    setup_opt_investment!(cep, ts_data, data, config)
 
-    @info "Setting up the optimization equations ..."
-    set_up_equations(cep=cep, ts_data=ts_data, data=data, config=config)
-    setup_opt_storage!(cep, ts_data, config, data)
-    setup_opt_conversion!(cep, config, ts_data, data)    
-    set_opt_transmission!(cep, config, ts_data, data)
-    setup_opt_objective!(cep, config)
+    if !surrogate
+        setup_opt_op_variables!(cep, config) 
+        setup_opt_operation!(cep, ts_data, data, config)
+        setup_opt_storage!(cep, ts_data, config, data)
+        setup_opt_conversion!(cep, config, ts_data, data)    
+        set_opt_transmission!(cep, config, ts_data, data)
+        setup_opt_objective!(cep, config)
+    end
 
     return cep
 end
@@ -116,7 +120,66 @@ function setup_opt_op_variables!(cep::OptModelCEP,  config::Dict{Any, Any})
     # generation variables
     @variable(cep.model, gen[r ∈ 𝓡 , g ∈ setdiff(𝓖, cep.sets["storage_techs"]), y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
 
-    @variable(cep.model, em[y ∈ 𝓨] ≥ 0)      # emission CO2 per year ##curtail,emt??
+    @variable(cep.model, em[y ∈ 𝓨] ≥ 0)      # emission CO2 per year 
+    return cep
+end
+
+
+
+"""
+    setup_opt_investment!(; cep::OptModelCEP, ts_data::ClustData, data::OptDataCEP, config::Dict{Any, Any}) -> OptModelCEP
+
+Adds investment-related constraints to the capacity expansion model.
+
+# Arguments
+- `cep::OptModelCEP`: The optimization model container that includes sets, the JuMP model, and variable definitions.
+- `ts_data::ClustData`: Time series clustering data (not directly used here but may be needed for downstream compatibility).
+- `data::OptDataCEP`: Contains all scenario-specific input data such as initial capacity, lifetimes, and maximum potentials.
+- `config::Dict{Any, Any}`: Configuration dictionary, passed to subfunctions (e.g., for cost setup).
+
+# Returns
+- `OptModelCEP`: The updated model container with investment constraints added.
+"""
+
+
+function setup_opt_investment!(cep::OptModelCEP, 
+    ts_data::ClustData, 
+    data::OptDataCEP, 
+    config::Dict{Any, Any})
+
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
+    lines = data.lines
+    data = data.data
+
+    ### STORAGE AND GENERATOR CAPACITY EXPANSION ###
+    # fix generation capacity where no investments are allowed to the base year
+    @constraint(cep.model, NoInvestments[r ∈ 𝓡, y ∈ 𝓨, g ∈ setdiff(cep.sets["nodes"], cep.sets["invest_tech"])], cep.model[:TotalCapacityAnnual][r,g,y] == data["cap_init"][r,g,y])
+    setup_opt_costs_cap!(cep, config, data, cep.sets["invest_tech"])
+
+    # new capacity investments 
+    @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + data["cap_init"][r,g,y])    
+    # accumulated capacity
+    @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,yy] for yy ∈ 𝓨 if (y - yy < data["lifetime"][g]) && (y-yy >= 0)))
+
+    # max potential capacity constraint
+    for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨
+        if data["cap"][r, g, y] > 0
+            @constraint(cep.model, cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
+        end
+    end
+
+
+    ### STORAGE E2P RATIO INVESTMENT RATIO ###
+    @constraint(cep.model, P2E_ratio[r ∈ 𝓡, s ∈ intersect(𝓢,cep.sets["invest_tech"]) , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_out",y] * config["techs"][s]["constraints"]["P2E"]  ≤ cep.model[:TotalCapacityAnnual][r,s,y])
+
+
+    ### TRANSMISSION LINE CAPACITY EXPANSION ####
+    @variable(cep.model, NewTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
+    @variable(cep.model, TotalTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
+
+    @constraint(cep.model, ExistingTransmCapa[g ∈ cep.sets["transmission"], l ∈ 𝓛], TotalTradeCapacity[g,l,𝓨[1]] == lines[(g, l)].power_lim)  
+    @constraint(cep.model, TransmissionExpansion[g ∈ cep.sets["transmission"], l ∈ 𝓛, i ∈ eachindex(𝓨)], TotalTradeCapacity[g,l,𝓨[i]] == NewTradeCapacity[g,l,𝓨[i]] + TotalTradeCapacity[g,l,𝓨[i-1]])    
+    @constraint(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨], cep.model[:COST]["cap",y,g] == sum(NewTradeCapacity[g,l,y] * lines[(g, l)].length * config["techs"][g]["investment_costs"] for l ∈ 𝓛))
 
     return cep
 end
@@ -142,8 +205,7 @@ Adds operational constraints to the capacity expansion or dispatch model.
 function setup_opt_operation!(; cep::OptModelCEP, 
     ts_data::ClustData, 
     data::OptDataCEP, 
-    config::Dict{Any, Any}, 
-    kwargs...)
+    config::Dict{Any, Any}, )
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
     data = data.data
@@ -173,24 +235,26 @@ function setup_opt_operation!(; cep::OptModelCEP,
     @constraint(cep.model, EM[y ∈ 𝓨], cep.model[:em][y] == sum(cep.model[:gen][r,g,y,c,t] * ts_data.weight[t] * data["emission"][g] for r ∈ 𝓡, g ∈ emitting_fuels, c ∈ cep.sets["carrier"][g], t ∈ 𝓣))
 
     if !config["dispatch"]
-        # fix generation capacity where no investments are allowed to the base year
-        @constraint(cep.model, NoInvestments[r ∈ 𝓡, y ∈ 𝓨, g ∈ setdiff(cep.sets["nodes"], cep.sets["invest_tech"])], cep.model[:TotalCapacityAnnual][r,g,y] == data["cap_init"][r,g,y])
-        setup_opt_costs_cap!(cep, config, data, cep.sets["invest_tech"])
-
-        # new capacity investments 
-        @constraint(cep.model, NewCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,g,y] == cep.model[:AccumulatedNewCapacity][r,g,y] + data["cap_init"][r,g,y])    
-        # accumulated capacity
-        @constraint(cep.model, AccCap[r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y in 𝓨], cep.model[:AccumulatedNewCapacity][r,g,y] == sum(cep.model[:NewCapacity][r,g,yy] for yy ∈ 𝓨 if (y - yy < data["lifetime"][g]) && (y-yy >= 0)))
         @constraint(cep.model, EmissionBudget[y ∈ 𝓨], cep.model[:em][y] ≤ sum(data["budget"][r,y] for r ∈ 𝓡))
-
-        # max potential capacity constraint
-        for r ∈ 𝓡, g ∈ cep.sets["invest_tech"], y ∈ 𝓨
-            if data["cap"][r, g, y] > 0
-                @constraint(cep.model, cep.model[:TotalCapacityAnnual][r, g, y] ≤ data["cap"][r, g, y])
-            end
-        end
     end
+    return cep
 end
+
+
+"""
+    setup_opt_storage!(cep::OptModelCEP, ts_data::ClustData, config::Dict{Any, Any}, data::OptDataCEP) -> OptModelCEP
+
+Adds storage-related variables and constraints to the energy system optimization model.
+
+# Arguments
+- `cep::OptModelCEP`: The optimization model container with sets, JuMP model, and defined variables.
+- `ts_data::ClustData`: Contains clustered time-series data, such as inflows, time weights, and profiles.
+- `config::Dict{Any, Any}`: Configuration dictionary with dispatch mode toggle and technology parameters.
+- `data::OptDataCEP`: Model input data including capacity, efficiencies, and initial storage values.
+
+# Returns
+- `OptModelCEP`: The updated model with storage components added.
+"""
 
 
 function setup_opt_storage!(cep::OptModelCEP, 
@@ -234,11 +298,6 @@ function setup_opt_storage!(cep::OptModelCEP,
             base_name="SoC_Balance$r,$s,$y,$t" 
             )   
         end
-    end
-    
-    if !config["dispatch"]
-        ## define capital costs
-        @constraint(cep.model, P2E_ratio[r ∈ 𝓡, s ∈ intersect(𝓢,cep.sets["invest_tech"]) , y ∈ 𝓨], cep.model[:TotalCapacityAnnual][r,"$(replace(s, "S_" => "D_"))_out",y] * config["techs"][s]["constraints"]["P2E"]  ≤ cep.model[:TotalCapacityAnnual][r,s,y])
     end
     return cep
 end
@@ -337,7 +396,6 @@ function set_opt_transmission!(cep::OptModelCEP,
     ## VARIABLE ##
     @variable(cep.model, FLOW[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣] >= 0)
 
-
     @constraint(cep.model, Nettrade[r ∈ 𝓡, g ∈ cep.sets["transmission"], y ∈ 𝓨, t ∈ 𝓣, c ∈ cep.sets["carrier"][g]], 
     cep.model[:gen][r,g,y,c,t] 
     == sum(cep.model[:FLOW][g, line_end,"uniform",y,t] - cep.model[:FLOW][g,line_end,"opposite",y,t]/lines[(g,line_end)].eff for line_end ∈ [l for ((t, l), v) ∈ lines if t == g && v.node_end == r]) + 
@@ -346,25 +404,11 @@ function set_opt_transmission!(cep::OptModelCEP,
     setup_opt_costs_var!(cep, config, data, ts_data, cep.sets["transmission"], 1)
     JuMP.fix.(cep.model[:COST]["fix",:,cep.sets["transmission"]], 0; force=true)
 
-    if !config["dispatch"]
-        @variable(cep.model, NewTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
-        @variable(cep.model, TotalTradeCapacity[g ∈ cep.sets["transmission"], l ∈ 𝓛, y ∈ 𝓨]  >= 0)
-
-        @constraint(cep.model, ExistingTransmCapa[g ∈ cep.sets["transmission"], l ∈ 𝓛], TotalTradeCapacity[g,l,𝓨[1]] == lines[(g, l)].power_lim)  
-        @constraint(cep.model, TransmissionExpansion[g ∈ cep.sets["transmission"], l ∈ 𝓛, i ∈ eachindex(𝓨)], TotalTradeCapacity[g,l,𝓨[i]] == NewTradeCapacity[g,l,𝓨[i]] + TotalTradeCapacity[g,l,𝓨[i-1]])
-        
-        @constraint(cep.model, NewTradeCapacityCosts[g ∈ cep.sets["transmission"], y ∈ 𝓨], cep.model[:COST]["cap",y,g] == sum(NewTradeCapacity[g,l,y] * lines[(g, l)].length * config["techs"][g]["investment_costs"] for l ∈ 𝓛))
-        
-        #JuMP.fix.(cep.model[:NewTradeCapacity][:, :, 𝓨[1]], 0; force=true)
-        #JuMP.fix.(cep.model[:COST]["cap",𝓨[1],cep.sets["transmission"]], 0; force=true)
-    end
-
     ## TRANSMISSION TRANS ##
     @constraint(cep.model, FlowLimit[g ∈ cep.sets["transmission"], l ∈ 𝓛, dir ∈ ["uniform", "opposite"], y ∈ 𝓨, t ∈ 𝓣], cep.model[:FLOW][g,l,dir,y,t] ≤ (config["dispatch"] ? lines[(g, l)].power_lim : TotalTradeCapacity[g,l,y]))
         
     return cep
 end
-
 
 
 
