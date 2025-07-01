@@ -38,14 +38,15 @@ end
 
 function setup_opt_basic(;ts_data::ClustData, 
     config::Dict{Any, Any},
+    solver::DataType,
     data::OptDataCEP)
     
     # Initialize model
     model =  JuMP.Model()
-    set_optimizer(model, Gurobi.Optimizer)
+    set_optimizer(model, solver)
     # Initialize solver
     optimizer = optimizer_with_attributes(
-        () -> Gurobi.Optimizer(Gurobi.Env()),
+        () -> Ipopt.Optimizer(Ipopt.Env()),
         "LogToConsole" => 0,
         "OutputFlag"=> 0,
         "Method" => 2,
