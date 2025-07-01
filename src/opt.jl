@@ -61,7 +61,21 @@ end
 
 
 
-function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
+
+"""
+    setup_opt_inv_variables(; cep::OptModelCEP, config::Dict{Any, Any}) -> OptModelCEP
+
+Sets up the basic investment-related decision variables in the optimization model.
+
+# Arguments
+- `cep::OptModelCEP`: The optimization model container, which includes sets and the JuMP model.
+- `config::Dict{Any, Any}`: Configuration dictionary that must include a `"dispatch"` key to determine model mode.
+
+# Returns
+- `OptModelCEP`: The updated model container with investment variables added.
+"""
+
+function setup_opt_inv_variables!(cep::OptModelCEP,  config::Dict{Any, Any})
 
     @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
@@ -75,6 +89,29 @@ function setup_opt_basic_variables(; cep::OptModelCEP,  config::Dict{Any, Any})
     else
         @variable(cep.model, COST[z ∈ ["fix", "var"], y ∈ 𝓨, g ∈ 𝓖] ≥ 0) 
     end
+    return cep
+end
+
+
+
+
+
+"""
+    setup_opt_op_variables(; cep::OptModelCEP, config::Dict{Any, Any}) -> OptModelCEP
+
+Defines the basic operational decision variables in the optimization model.
+
+# Arguments
+- `cep::OptModelCEP`: The optimization model container, which includes sets and the JuMP model.
+- `config::Dict{Any, Any}`: Configuration dictionary (not directly used here but kept for consistency).
+
+# Returns
+- `OptModelCEP`: The updated model container with operational variables added.
+"""
+
+function setup_opt_op_variables!(cep::OptModelCEP,  config::Dict{Any, Any})
+
+    @unpack 𝓖, 𝓨, 𝓣, 𝓡, 𝓢, 𝓛, 𝓒 = get_sets(cep=cep)
 
     # generation variables
     @variable(cep.model, gen[r ∈ 𝓡 , g ∈ setdiff(𝓖, cep.sets["storage_techs"]), y ∈ 𝓨, c ∈ cep.sets["carrier"][g], t ∈ 𝓣])  # planned generation for generators
@@ -86,7 +123,23 @@ end
 
 
 
-function set_up_equations(; cep::OptModelCEP, 
+"""
+    setup_opt_operation!(; cep::OptModelCEP, ts_data::ClustData, data::OptDataCEP, config::Dict{Any, Any}) -> OptModelCEP
+
+Adds operational constraints to the capacity expansion or dispatch model.
+
+# Arguments
+- `cep::OptModelCEP`: The optimization model object containing sets, model variables, and JuMP model.
+- `ts_data::ClustData`: Clustered time series data, including weights and normalized profiles.
+- `data::OptDataCEP`: Input data wrapper, including capacity, demand, efficiency, and emissions.
+- `config::Dict{Any, Any}`: Configuration dictionary. The key `"dispatch"` toggles between investment and dispatch mode. Other keys include `"cll"` for the cost of lost load.
+
+# Returns
+- `OptModelCEP`: The updated model with all operational constraints defined.
+"""
+
+
+function setup_opt_operation!(; cep::OptModelCEP, 
     ts_data::ClustData, 
     data::OptDataCEP, 
     config::Dict{Any, Any}, 
@@ -256,7 +309,20 @@ function setup_opt_conversion!(cep::OptModelCEP,
 end 
 
 
+"""
+    set_opt_transmission!(cep::OptModelCEP, config::Dict{Any, Any}, ts_data::ClustData, data::OptDataCEP) -> OptModelCEP
 
+Adds variables and constraints to model power and carrier transmission flows across regions.
+
+# Arguments
+- `cep::OptModelCEP`: The optimization model container with sets and the JuMP model.
+- `config::Dict{Any, Any}`: Configuration dictionary with keys such as `"dispatch"` that toggle mode-specific behavior.
+- `ts_data::ClustData`: Time series clustering data with time weights and temporal resolution.
+- `data::OptDataCEP`: Contains all input data including transmission line parameters and capacity.
+
+# Returns
+- `OptModelCEP`: The updated model including transmission flow handling.
+"""
 
 
 function set_opt_transmission!(cep::OptModelCEP, 
